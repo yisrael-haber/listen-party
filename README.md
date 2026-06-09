@@ -2,7 +2,7 @@
 
 `listen-party` is a small LAN music server for office / LAN-party environments.
 It serves one embedded browser UI, indexes local MP3 files, and lets connected
-browsers share one queue and playback state.
+browsers share one queue and one playback state.
 
 The project is intentionally simple:
 
@@ -22,20 +22,61 @@ Working:
 - Browser UI embedded in the binary.
 - Shared queue.
 - Add, remove, and clear queued tracks.
-- Skip current track.
+- Move queued tracks up, down, or directly to next.
+- Explicit shared play/pause, seek, and skip controls.
+- Play Now from search results or recently played tracks.
 - Track-end auto advance.
-- Search-as-you-type with recent tracks as the empty search view.
+- Server-owned playback state with client convergence for track, play/pause,
+  seek position, and time drift.
+- Connected listener count.
+- Recently played history.
+- Browser-local volume and mute controls.
+- Search-as-you-type with recently added tracks as the empty search view.
 - Library track count.
 - SSE state updates and periodic state heartbeat.
 
 Known limitation:
 
-- Playback synchronization between tabs is not yet reliable enough. Queue state
-  and current track state propagate, but browser media element play/pause state
-  can still desynchronize, especially around starting the first track in another
-  tab. This needs a deliberate redesign of the playback-control model.
+- Playback synchronization is much stronger than the original native-control
+  model, but still depends on browser media behavior. Browser autoplay policy
+  can stop a tab from making sound until that browser has been interacted with.
+  That refusal is local and is not published back as shared state.
+- Very small timing differences can still happen between browsers. Clients
+  correct drift against server time when the local media element is more than
+  0.1 seconds from the expected position.
 
-Volume and mute are intentionally browser-local.
+Volume and mute are local to the tab session. They survive refresh in the same
+tab, but are not synchronized with other tabs or stored on the server.
+
+## Synchronization Model
+
+The server is the durable source of truth for global playback:
+
+- Current track.
+- Queue.
+- Queue order.
+- Playing or paused.
+- Shared seek position.
+- Track start time.
+- Recently played history.
+- Connected listener count.
+
+Clients receive state through SSE and periodic heartbeats. Each browser then
+keeps its local audio element aligned to that state. Client audio events do not
+become shared commands, except for `ended`, which advances the shared queue when
+the current track finishes.
+
+Global state changes come from explicit app controls:
+
+- Play / pause.
+- Seek.
+- Skip.
+- Queue add, remove, and clear.
+- Queue move up, move down, and move to next.
+- Play Now.
+
+Volume and mute are intentionally outside the shared state. They are tab-local
+preferences only.
 
 ## Config
 
@@ -134,18 +175,14 @@ fuser -k 8080/tcp
 
 Highest priority:
 
-- Redesign playback synchronization so the server is the durable source of
-  truth and all tabs converge consistently on track, play/pause, and time.
-- Decide whether to keep native `<audio controls>` or replace it with explicit
-  app-owned controls. Native controls are convenient, but they make full shared
-  control harder to reason about.
 - Add focused browser-level/manual test cases for two-tab synchronization.
+- Keep hardening the current synchronization model without adding complex client
+  state machines.
 
 Next:
 
 - Editable admin page for config and library management.
 - Separate admin-only auth surface for administration.
 - Scan stats: last scan time, indexed count, added/removed/skipped files.
-- Better queue management: reorder and move-to-next.
 - Future room model: dynamic rooms with join secrets.
 - OAuth-capable auth abstraction for later deployment.

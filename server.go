@@ -54,7 +54,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/search", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleSearch)))
 	mux.Handle("GET /api/library", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleLibrary)))
 	mux.Handle("POST /api/queue", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleQueue)))
+	mux.Handle("POST /api/queue/move", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleQueueMove)))
+	mux.Handle("POST /api/queue/next", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleQueueNext)))
 	mux.Handle("POST /api/playback/play", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handlePlay)))
+	mux.Handle("POST /api/playback/play-now", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handlePlayNow)))
 	mux.Handle("POST /api/playback/pause", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handlePause)))
 	mux.Handle("POST /api/playback/seek", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleSeek)))
 	mux.Handle("POST /api/playback/ended", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleEnded)))
@@ -187,6 +190,45 @@ func (s *Server) handleQueueRemove(w http.ResponseWriter, r *http.Request) {
 	s.writeViewState(w, r, s.player.Remove(s.roomID, req.ID))
 }
 
+func (s *Server) handleQueueMove(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID        int64 `json:"id"`
+		Direction int   `json:"direction"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.ID <= 0 {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	if req.Direction < 0 {
+		s.writeViewState(w, r, s.player.Move(s.roomID, req.ID, -1))
+		return
+	}
+	if req.Direction > 0 {
+		s.writeViewState(w, r, s.player.Move(s.roomID, req.ID, 1))
+		return
+	}
+	s.writeViewState(w, r, s.player.Snapshot(s.roomID))
+}
+
+func (s *Server) handleQueueNext(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.ID <= 0 {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	s.writeViewState(w, r, s.player.MoveToNext(s.roomID, req.ID))
+}
+
 func (s *Server) handleQueueClear(w http.ResponseWriter, r *http.Request) {
 	s.writeViewState(w, r, s.player.Clear(s.roomID))
 }
@@ -198,6 +240,29 @@ func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeViewState(w, r, state)
+}
+
+func (s *Server) handlePlayNow(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TrackID int64 `json:"track_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.TrackID <= 0 {
+		http.Error(w, "track_id is required", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.library.Get(r.Context(), req.TrackID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "track not found", http.StatusNotFound)
+			return
+		}
+		writeError(w, err)
+		return
+	}
+	s.writeViewState(w, r, s.player.PlayNow(s.roomID, req.TrackID))
 }
 
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
@@ -279,8 +344,9 @@ func (s *Server) writeViewState(w http.ResponseWriter, r *http.Request, state Pl
 
 type ViewState struct {
 	PlaybackState
-	Current *Track          `json:"current"`
-	Queue   []ViewQueueItem `json:"queue"`
+	Current *Track            `json:"current"`
+	Queue   []ViewQueueItem   `json:"queue"`
+	History []ViewHistoryItem `json:"history"`
 }
 
 type ViewQueueItem struct {
@@ -288,12 +354,20 @@ type ViewQueueItem struct {
 	Track *Track `json:"track"`
 }
 
+type ViewHistoryItem struct {
+	PlayedItem
+	Track *Track `json:"track"`
+}
+
 func (s *Server) viewState(ctx context.Context, state PlaybackState) (ViewState, error) {
-	ids := make([]int64, 0, len(state.Queue)+1)
+	ids := make([]int64, 0, len(state.Queue)+len(state.History)+1)
 	if state.CurrentTrackID != 0 {
 		ids = append(ids, state.CurrentTrackID)
 	}
 	for _, item := range state.Queue {
+		ids = append(ids, item.TrackID)
+	}
+	for _, item := range state.History {
 		ids = append(ids, item.TrackID)
 	}
 	tracks, err := s.library.ListByIDs(ctx, ids)
@@ -302,6 +376,7 @@ func (s *Server) viewState(ctx context.Context, state PlaybackState) (ViewState,
 	}
 	view := ViewState{PlaybackState: state}
 	view.Queue = make([]ViewQueueItem, 0, len(state.Queue))
+	view.History = make([]ViewHistoryItem, 0, len(state.History))
 	if track, ok := tracks[state.CurrentTrackID]; ok {
 		view.Current = &track
 	}
@@ -311,6 +386,13 @@ func (s *Server) viewState(ctx context.Context, state PlaybackState) (ViewState,
 			viewItem.Track = &track
 		}
 		view.Queue = append(view.Queue, viewItem)
+	}
+	for _, item := range state.History {
+		viewItem := ViewHistoryItem{PlayedItem: item}
+		if track, ok := tracks[item.TrackID]; ok {
+			viewItem.Track = &track
+		}
+		view.History = append(view.History, viewItem)
 	}
 	return view, nil
 }

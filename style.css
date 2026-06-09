@@ -115,7 +115,7 @@ button.compact {
   font-size: 0.9rem;
 }
 
-.search, .queue-panel {
+.search, .queue-panel, .history-panel {
   margin-bottom: 20px;
   padding: 18px;
   border: 1px solid var(--line);
@@ -185,7 +185,7 @@ input:focus {
   margin-bottom: 12px;
 }
 
-.queue-panel h2 {
+.queue-panel h2, .history-panel h2 {
   margin-bottom: 0;
   font-size: 1.2rem;
 }
@@ -204,6 +204,13 @@ input:focus {
   gap: 12px;
   padding: 10px 0;
   border-top: 1px solid var(--line);
+}
+
+.row-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .player-bar {
@@ -243,16 +250,43 @@ input:focus {
 }
 
 audio {
-  width: 100%;
-  accent-color: var(--accent);
+  display: none;
 }
 
 .player-controls {
   grid-column: 2;
   display: grid;
-  grid-template-columns: 1fr 42px;
+  grid-template-columns: 42px minmax(180px, 1fr) minmax(120px, 160px) 42px;
   gap: 10px;
   align-items: center;
+}
+
+.seek-control, .volume-control {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.seek-control {
+  grid-template-columns: 42px minmax(0, 1fr) 42px;
+}
+
+.volume-control {
+  grid-template-columns: 32px minmax(0, 1fr);
+}
+
+input[type="range"] {
+  min-height: 32px;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+input[type="range"]:disabled {
+  cursor: wait;
+  opacity: 0.58;
 }
 
 .icon-button {
@@ -274,6 +308,58 @@ audio {
   height: 32px;
   min-height: 32px;
   font-size: 1.25rem;
+}
+
+.playback-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+.play-icon {
+  background: currentColor;
+  clip-path: polygon(20% 8%, 20% 92%, 88% 50%);
+}
+
+.pause-icon {
+  position: relative;
+}
+
+.pause-icon::before, .pause-icon::after {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 5px;
+  border-radius: 1px;
+  background: currentColor;
+  content: "";
+}
+
+.pause-icon::before {
+  left: 3px;
+}
+
+.pause-icon::after {
+  right: 3px;
+}
+
+.volume-icon {
+  display: block;
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.volume-muted-icon, #mute.muted .volume-on-icon {
+  display: none;
+}
+
+#mute.muted .volume-muted-icon {
+  display: block;
 }
 
 .skip-icon {
@@ -324,6 +410,21 @@ audio {
 
   .player-controls {
     grid-column: 1;
+    grid-template-columns: auto 42px;
+  }
+
+  #togglePlayback {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  #skip {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .seek-control, .volume-control {
+    grid-column: 1 / -1;
   }
 
   .track-copy {
