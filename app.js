@@ -4,8 +4,6 @@ const artistEl = document.getElementById("artist");
 const queueEl = document.getElementById("queue");
 const historyEl = document.getElementById("history");
 const resultsEl = document.getElementById("results");
-const rescanButton = document.getElementById("rescan");
-const rescanStatus = document.getElementById("rescanStatus");
 const presenceEl = document.getElementById("presence");
 const clearQueueButton = document.getElementById("clearQueue");
 const togglePlaybackButton = document.getElementById("togglePlayback");
@@ -23,12 +21,16 @@ const syncToleranceSeconds = 0.1;
 
 let currentID = 0;
 let currentPlaybackID = 0;
-let statusTimer = 0;
 let lastState = null;
 let lastStateReceivedAt = 0;
 let searchTimer = 0;
 let seeking = false;
 let lastVolume = 1;
+let localVolume = 1;
+let localMuted = false;
+let audioContext = null;
+let gainNode = null;
+let mediaSource = null;
 
 function label(track) {
   if (!track) return "";
@@ -85,7 +87,7 @@ function renderPlaybackButton(playing) {
 }
 
 function renderVolumeButton() {
-  const muted = audio.muted || audio.volume === 0;
+  const muted = localMuted || localVolume === 0;
   muteButton.title = muted ? "Unmute" : "Mute";
   muteButton.setAttribute("aria-label", muted ? "Unmute" : "Mute");
   muteButton.classList.toggle("muted", muted);
@@ -94,17 +96,50 @@ function renderVolumeButton() {
 function loadLocalVolume() {
   const storedVolume = Number(sessionStorage.getItem(volumeStorageKey));
   if (Number.isFinite(storedVolume) && storedVolume >= 0 && storedVolume <= 1) {
-    audio.volume = storedVolume;
+    localVolume = storedVolume;
   }
-  lastVolume = audio.volume > 0 ? audio.volume : 1;
-  audio.muted = sessionStorage.getItem(mutedStorageKey) === "true" || audio.volume === 0;
-  volumeInput.value = String(audio.volume);
-  renderVolumeButton();
+  localMuted = sessionStorage.getItem(mutedStorageKey) === "true" || localVolume === 0;
+  lastVolume = localVolume > 0 ? localVolume : 1;
+  volumeInput.value = String(localVolume);
+  audio.muted = false;
+  applyLocalVolume();
 }
 
 function saveLocalVolume() {
-  sessionStorage.setItem(volumeStorageKey, String(audio.volume));
-  sessionStorage.setItem(mutedStorageKey, audio.muted ? "true" : "false");
+  sessionStorage.setItem(volumeStorageKey, String(localVolume));
+  sessionStorage.setItem(mutedStorageKey, localMuted ? "true" : "false");
+}
+
+function ensureAudioGraph() {
+  if (gainNode) {
+    if (audioContext.state === "suspended") {
+      audioContext.resume().catch(console.error);
+    }
+    return;
+  }
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) {
+    return;
+  }
+  audioContext = new AudioContext();
+  mediaSource = audioContext.createMediaElementSource(audio);
+  gainNode = audioContext.createGain();
+  mediaSource.connect(gainNode);
+  gainNode.connect(audioContext.destination);
+  audio.volume = 1;
+  audio.muted = false;
+  audioContext.resume().catch(console.error);
+}
+
+function applyLocalVolume() {
+  const gain = localMuted ? 0 : localVolume;
+  if (gainNode) {
+    gainNode.gain.setTargetAtTime(gain, audioContext.currentTime, 0.01);
+  } else {
+    audio.volume = gain;
+    audio.muted = false;
+  }
+  renderVolumeButton();
 }
 
 function staleState(state) {
@@ -395,58 +430,37 @@ seekInput.addEventListener("change", async () => {
 });
 
 volumeInput.addEventListener("input", () => {
-  audio.volume = Math.max(0, Math.min(1, Number(volumeInput.value)));
-  audio.muted = audio.volume === 0;
-  if (audio.volume > 0) {
-    lastVolume = audio.volume;
+  ensureAudioGraph();
+  const next = Number(volumeInput.value);
+  if (!Number.isFinite(next)) return;
+  localVolume = Math.max(0, Math.min(1, next));
+  localMuted = localVolume === 0;
+  if (localVolume > 0) {
+    lastVolume = localVolume;
   }
+  applyLocalVolume();
+});
+
+volumeInput.addEventListener("change", () => {
   saveLocalVolume();
-  renderVolumeButton();
 });
 
 muteButton.addEventListener("click", () => {
-  if (audio.muted || audio.volume === 0) {
-    audio.muted = false;
-    audio.volume = lastVolume > 0 ? lastVolume : 1;
-    volumeInput.value = String(audio.volume);
+  ensureAudioGraph();
+  if (localMuted || localVolume === 0) {
+    localMuted = false;
+    localVolume = lastVolume > 0 ? lastVolume : 1;
+    volumeInput.value = String(localVolume);
   } else {
-    lastVolume = audio.volume;
-    audio.muted = true;
+    lastVolume = localVolume;
+    localMuted = true;
   }
+  applyLocalVolume();
   saveLocalVolume();
-  renderVolumeButton();
 });
 
 renderPlaybackButton(false);
 loadLocalVolume();
-
-function setRescanStatus(message, kind = "") {
-  clearTimeout(statusTimer);
-  rescanStatus.textContent = message;
-  rescanStatus.dataset.kind = kind;
-  if (message && kind !== "working") {
-    statusTimer = setTimeout(() => {
-      rescanStatus.textContent = "";
-      rescanStatus.dataset.kind = "";
-    }, 4000);
-  }
-}
-
-rescanButton.addEventListener("click", async () => {
-  rescanButton.disabled = true;
-  setRescanStatus("Rescanning library...", "working");
-  try {
-    await api("/api/admin/rescan", {method: "POST"});
-    setRescanStatus("Library rescanned", "ok");
-    await loadLibraryStatus();
-    await runSearch();
-  } catch (err) {
-    setRescanStatus("Rescan failed", "error");
-    console.error(err);
-  } finally {
-    rescanButton.disabled = false;
-  }
-});
 
 clearQueueButton.addEventListener("click", async () => {
   renderState(await api("/api/queue/clear", {method: "POST"}));

@@ -17,6 +17,11 @@ func main() {
 	flag.StringVar(&configPath, "config", "", "path to JSON config file")
 	flag.Parse()
 
+	resolvedConfigPath, err := ResolveConfigPath(configPath)
+	if err != nil {
+		slog.Error("resolve config path", "error", err)
+		os.Exit(1)
+	}
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		slog.Error("load config", "error", err)
@@ -48,12 +53,14 @@ func main() {
 	}
 
 	app := NewServer(ServerOptions{
-		Auth:    NewBasicAuth(cfg.Auth),
-		Library: store,
-		Player:  NewPlayback("default"),
-		Scanner: scanner,
-		RoomID:  "default",
-		Logger:  slog.Default(),
+		Auth:       NewBasicAuth(cfg.Auth),
+		Library:    store,
+		Player:     NewPlayback("default"),
+		Scanner:    scanner,
+		Config:     cfg,
+		ConfigPath: resolvedConfigPath,
+		RoomID:     "default",
+		Logger:     slog.Default(),
 	})
 
 	serverCtx, stopServer := context.WithCancel(context.Background())

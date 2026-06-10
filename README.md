@@ -101,8 +101,7 @@ If the config file does not exist, the server creates it with these defaults:
   "database_path": "${UserConfigDir}/listen-party/listen-party.sqlite",
   "auth": {
     "listener": {"username": "default", "password": "default"},
-    "admin": {"username": "admin", "password": "admin"},
-    "rescan": {"username": "default", "password": "default"}
+    "admin": {"username": "admin", "password": "admin"}
   }
 }
 ```

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Listen Party Admin</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="admin-page">
+  <main>
+    <header class="brand">
+      <h1>Admin</h1>
+      <p>Listen Party configuration</p>
+    </header>
+
+    <section class="controls">
+      <button id="rescan" type="button">Rescan</button>
+      <span id="rescanStatus" class="status" role="status" aria-live="polite"></span>
+    </section>
+
+    <section class="config-panel">
+      <div class="section-head">
+        <h2>Config</h2>
+        <span id="configStatus" class="status" role="status" aria-live="polite"></span>
+      </div>
+      <form id="configForm">
+        <label>
+          <span>Listen address</span>
+          <input id="configAddr" name="addr" autocomplete="off">
+        </label>
+        <label>
+          <span>Music directories</span>
+          <textarea id="configMusicDirs" name="music_dirs" rows="4" spellcheck="false"></textarea>
+        </label>
+        <label>
+          <span>Database path</span>
+          <input id="configDatabasePath" name="database_path" autocomplete="off">
+        </label>
+        <div class="config-grid">
+          <label>
+            <span>Listener username</span>
+            <input id="configListenerUser" autocomplete="username">
+          </label>
+          <label>
+            <span>Listener password</span>
+            <input id="configListenerPass" type="password" autocomplete="new-password">
+          </label>
+          <label>
+            <span>Admin username</span>
+            <input id="configAdminUser" autocomplete="username">
+          </label>
+          <label>
+            <span>Admin password</span>
+            <input id="configAdminPass" type="password" autocomplete="new-password">
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit">Save</button>
+        </div>
+      </form>
+    </section>
+  </main>
+  <script src="/admin.js"></script>
+</body>
+</html>

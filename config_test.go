@@ -13,16 +13,15 @@ func TestValidateRequiresUsefulConfig(t *testing.T) {
 		Auth: AuthConfig{
 			Listener: Credentials{Username: "listener", Password: "listen"},
 			Admin:    Credentials{Username: "admin", Password: "admin"},
-			Rescan:   Credentials{Username: "rescan", Password: "rescan"},
 		},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("valid config rejected: %v", err)
 	}
 
-	cfg.Auth.Rescan.Password = ""
+	cfg.Auth.Admin.Password = ""
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("missing rescan password accepted")
+		t.Fatal("missing admin password accepted")
 	}
 }
 
@@ -75,8 +74,7 @@ func TestLoadConfigCreatesConfiguredMusicDirs(t *testing.T) {
   "music_dirs": [` + strconvQuote(musicDir) + `],
   "auth": {
     "listener": {"username": "a", "password": "b"},
-    "admin": {"username": "c", "password": "d"},
-    "rescan": {"username": "e", "password": "f"}
+    "admin": {"username": "c", "password": "d"}
   }
 }`)
 	if err := os.WriteFile(configPath, data, 0o600); err != nil {
@@ -87,6 +85,35 @@ func TestLoadConfigCreatesConfiguredMusicDirs(t *testing.T) {
 	}
 	if info, err := os.Stat(musicDir); err != nil || !info.IsDir() {
 		t.Fatalf("configured music dir was not created: info=%v err=%v", info, err)
+	}
+}
+
+func TestSaveConfigWritesConfigAndCreatesMusicDirs(t *testing.T) {
+	dir := t.TempDir()
+	musicDir := filepath.Join(dir, "music")
+	configPath := filepath.Join(dir, "config.json")
+	cfg := Config{
+		Addr:         "127.0.0.1:7777",
+		MusicDirs:    []string{musicDir},
+		DatabasePath: filepath.Join(dir, "db.sqlite"),
+		Auth: AuthConfig{
+			Listener: Credentials{Username: "listener", Password: "listen"},
+			Admin:    Credentials{Username: "admin", Password: "admin"},
+		},
+	}
+
+	if err := SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	if info, err := os.Stat(musicDir); err != nil || !info.IsDir() {
+		t.Fatalf("music dir was not created: info=%v err=%v", info, err)
+	}
+	loaded, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if loaded.Addr != cfg.Addr || loaded.DatabasePath != cfg.DatabasePath {
+		t.Fatalf("loaded config = %#v, want %#v", loaded, cfg)
 	}
 }
 

@@ -16,7 +16,6 @@ type Credentials struct {
 type AuthConfig struct {
 	Listener Credentials `json:"listener"`
 	Admin    Credentials `json:"admin"`
-	Rescan   Credentials `json:"rescan"`
 }
 
 type Config struct {
@@ -42,6 +41,13 @@ func DefaultConfigPath() (string, error) {
 	return filepath.Join(dir, "config.json"), nil
 }
 
+func ResolveConfigPath(path string) (string, error) {
+	if path != "" {
+		return path, nil
+	}
+	return DefaultConfigPath()
+}
+
 func DefaultDatabasePath() (string, error) {
 	dir, err := DefaultConfigDir()
 	if err != nil {
@@ -59,12 +65,10 @@ func DefaultMusicDir() (string, error) {
 }
 
 func LoadConfig(path string) (Config, error) {
-	if path == "" {
-		var err error
-		path, err = DefaultConfigPath()
-		if err != nil {
-			return Config{}, err
-		}
+	var err error
+	path, err = ResolveConfigPath(path)
+	if err != nil {
+		return Config{}, err
 	}
 
 	data, err := os.ReadFile(path)
@@ -79,15 +83,8 @@ func LoadConfig(path string) (Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse %s: %w", path, err)
 	}
-	if cfg.Addr == "" {
-		cfg.Addr = "0.0.0.0:8080"
-	}
-	if cfg.DatabasePath == "" {
-		dbPath, err := DefaultDatabasePath()
-		if err != nil {
-			return Config{}, err
-		}
-		cfg.DatabasePath = dbPath
+	if err := cfg.ApplyDefaults(); err != nil {
+		return Config{}, err
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -96,6 +93,31 @@ func LoadConfig(path string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func SaveConfig(path string, cfg Config) error {
+	path, err := ResolveConfigPath(path)
+	if err != nil {
+		return err
+	}
+	if err := cfg.ApplyDefaults(); err != nil {
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if err := cfg.EnsureMusicDirs(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o600)
 }
 
 func createDefaultConfig(path string) (Config, error) {
@@ -141,7 +163,6 @@ func NewDefaultConfig() (Config, error) {
 		Auth: AuthConfig{
 			Listener: defaultCreds,
 			Admin:    adminCreds,
-			Rescan:   defaultCreds,
 		},
 	}, nil
 }
@@ -161,8 +182,19 @@ func (c Config) Validate() error {
 	if err := validateCreds("auth.admin", c.Auth.Admin); err != nil {
 		return err
 	}
-	if err := validateCreds("auth.rescan", c.Auth.Rescan); err != nil {
-		return err
+	return nil
+}
+
+func (c *Config) ApplyDefaults() error {
+	if c.Addr == "" {
+		c.Addr = "0.0.0.0:8080"
+	}
+	if c.DatabasePath == "" {
+		dbPath, err := DefaultDatabasePath()
+		if err != nil {
+			return err
+		}
+		c.DatabasePath = dbPath
 	}
 	return nil
 }

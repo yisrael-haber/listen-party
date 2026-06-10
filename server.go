@@ -11,25 +11,31 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type ServerOptions struct {
-	Auth    *BasicAuth
-	Library *Store
-	Player  *Playback
-	Scanner *Scanner
-	RoomID  string
-	Logger  *slog.Logger
+	Auth       *BasicAuth
+	Library    *Store
+	Player     *Playback
+	Scanner    *Scanner
+	Config     Config
+	ConfigPath string
+	RoomID     string
+	Logger     *slog.Logger
 }
 
 type Server struct {
-	auth    *BasicAuth
-	library *Store
-	player  *Playback
-	scanner *Scanner
-	roomID  string
-	logger  *slog.Logger
+	auth       *BasicAuth
+	library    *Store
+	player     *Playback
+	scanner    *Scanner
+	configMu   sync.RWMutex
+	config     Config
+	configPath string
+	roomID     string
+	logger     *slog.Logger
 }
 
 func NewServer(opts ServerOptions) *Server {
@@ -37,17 +43,23 @@ func NewServer(opts ServerOptions) *Server {
 		opts.Logger = slog.Default()
 	}
 	return &Server{
-		auth:    opts.Auth,
-		library: opts.Library,
-		player:  opts.Player,
-		scanner: opts.Scanner,
-		roomID:  opts.RoomID,
-		logger:  opts.Logger,
+		auth:       opts.Auth,
+		library:    opts.Library,
+		player:     opts.Player,
+		scanner:    opts.Scanner,
+		config:     opts.Config,
+		configPath: opts.ConfigPath,
+		roomID:     opts.RoomID,
+		logger:     opts.Logger,
 	}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	requireAdmin := s.auth.RequireRealm("listen-party-admin", RoleAdmin)
+	mux.Handle("GET /admin", requireAdmin(http.HandlerFunc(s.handleAdminPage)))
+	mux.Handle("GET /admin/", requireAdmin(http.HandlerFunc(s.handleAdminPage)))
+	mux.Handle("GET /admin.js", requireAdmin(http.HandlerFunc(s.handleAdminJS)))
 	mux.Handle("GET /", s.auth.Require(RoleListener, RoleAdmin)(http.FileServer(http.FS(webRoot()))))
 	mux.Handle("GET /events", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleEvents)))
 	mux.Handle("GET /api/state", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleState)))
@@ -64,15 +76,25 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/playback/skip", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleSkip)))
 	mux.Handle("POST /api/queue/remove", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleQueueRemove)))
 	mux.Handle("POST /api/queue/clear", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleQueueClear)))
-	mux.Handle("POST /api/admin/play", s.auth.Require(RoleAdmin)(http.HandlerFunc(s.handlePlay)))
-	mux.Handle("POST /api/admin/pause", s.auth.Require(RoleAdmin)(http.HandlerFunc(s.handlePause)))
-	mux.Handle("POST /api/admin/skip", s.auth.Require(RoleAdmin)(http.HandlerFunc(s.handleSkip)))
-	mux.Handle("POST /api/admin/rescan", s.auth.Require(RoleRescan)(http.HandlerFunc(s.handleRescan)))
+	mux.Handle("POST /api/admin/play", requireAdmin(http.HandlerFunc(s.handlePlay)))
+	mux.Handle("POST /api/admin/pause", requireAdmin(http.HandlerFunc(s.handlePause)))
+	mux.Handle("POST /api/admin/skip", requireAdmin(http.HandlerFunc(s.handleSkip)))
+	mux.Handle("POST /api/admin/rescan", requireAdmin(http.HandlerFunc(s.handleRescan)))
+	mux.Handle("GET /api/admin/config", requireAdmin(http.HandlerFunc(s.handleConfig)))
+	mux.Handle("PUT /api/admin/config", requireAdmin(http.HandlerFunc(s.handleConfigUpdate)))
 	mux.Handle("GET /media/", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleMedia)))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	return mux
+}
+
+func (s *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, adminRoot(), "admin.html")
+}
+
+func (s *Server) handleAdminJS(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, adminRoot(), "admin.js")
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -144,6 +166,57 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]int64{"track_count": count})
+}
+
+type ConfigView struct {
+	Path          string `json:"path"`
+	Config        Config `json:"config"`
+	RestartNeeded bool   `json:"restart_needed"`
+}
+
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	s.configMu.RLock()
+	view := ConfigView{
+		Path:   s.configPath,
+		Config: s.config,
+	}
+	s.configMu.RUnlock()
+	writeJSON(w, view)
+}
+
+func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
+	var cfg Config
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if err := cfg.ApplyDefaults(); err != nil {
+		writeError(w, err)
+		return
+	}
+
+	s.configMu.RLock()
+	old := s.config
+	path := s.configPath
+	s.configMu.RUnlock()
+
+	if err := SaveConfig(path, cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.auth.Update(cfg.Auth)
+	s.scanner.UpdateDirs(cfg.MusicDirs)
+
+	s.configMu.Lock()
+	s.config = cfg
+	s.configMu.Unlock()
+
+	writeJSON(w, ConfigView{
+		Path:          path,
+		Config:        cfg,
+		RestartNeeded: cfg.Addr != old.Addr || cfg.DatabasePath != old.DatabasePath,
+	})
 }
 
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {

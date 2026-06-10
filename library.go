@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -216,12 +217,19 @@ func scanTracks(rows *sql.Rows) ([]Track, error) {
 }
 
 type Scanner struct {
+	mu    sync.RWMutex
 	store *Store
 	dirs  []string
 }
 
 func NewScanner(store *Store, dirs []string) *Scanner {
-	return &Scanner{store: store, dirs: dirs}
+	return &Scanner{store: store, dirs: append([]string(nil), dirs...)}
+}
+
+func (s *Scanner) UpdateDirs(dirs []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dirs = append([]string(nil), dirs...)
 }
 
 func IsMP3(path string) bool {
@@ -229,13 +237,17 @@ func IsMP3(path string) bool {
 }
 
 func (s *Scanner) Scan(ctx context.Context) error {
+	s.mu.RLock()
+	dirs := append([]string(nil), s.dirs...)
+	s.mu.RUnlock()
+
 	tx, err := s.store.BeginScan(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	for _, root := range s.dirs {
+	for _, root := range dirs {
 		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				slog.Warn("skip path during scan", "path", path, "error", walkErr)
