@@ -6,6 +6,8 @@ const historyEl = document.getElementById("history");
 const resultsEl = document.getElementById("results");
 const presenceEl = document.getElementById("presence");
 const clearQueueButton = document.getElementById("clearQueue");
+const clearHistoryButton = document.getElementById("clearHistory");
+const previousButton = document.getElementById("previous");
 const togglePlaybackButton = document.getElementById("togglePlayback");
 const seekInput = document.getElementById("seek");
 const elapsedEl = document.getElementById("elapsed");
@@ -13,11 +15,11 @@ const durationEl = document.getElementById("duration");
 const muteButton = document.getElementById("mute");
 const volumeInput = document.getElementById("volume");
 const searchInput = document.getElementById("q");
-const searchStatus = document.getElementById("searchStatus");
 const libraryStatus = document.getElementById("libraryStatus");
 const volumeStorageKey = "listen-party-volume";
 const mutedStorageKey = "listen-party-muted";
 const syncToleranceSeconds = 0.1;
+const searchDebounceMS = 300;
 
 let currentID = 0;
 let currentPlaybackID = 0;
@@ -188,7 +190,9 @@ function renderState(state) {
   queueEl.replaceChildren(...state.queue.map(renderQueueItem));
   renderHistory(state.history || []);
   clearQueueButton.hidden = state.queue.length === 0;
+  clearHistoryButton.hidden = !state.history || state.history.length === 0;
   presenceEl.textContent = `${state.listener_count} listener${state.listener_count === 1 ? "" : "s"} connected`;
+  previousButton.disabled = !state.history || state.history.length === 0;
   togglePlaybackButton.disabled = !current && state.queue.length === 0;
   renderPlaybackButton(Boolean(current && !state.paused));
 }
@@ -198,27 +202,15 @@ function renderQueueItem(item) {
   li.className = "queue-item";
 
   const track = item.track;
-  const meta = document.createElement("div");
-  meta.className = "meta";
-  meta.innerHTML = `<div class="title"></div><div class="sub"></div>`;
-  meta.querySelector(".title").textContent = track ? track.title : `Track ${item.track_id}`;
-  meta.querySelector(".sub").textContent = track ? trackSubtitle(track) : "";
+  const meta = trackMeta(track ? track.title : `Track ${item.track_id}`, track ? trackSubtitle(track) : "");
 
   const actions = document.createElement("div");
   actions.className = "row-actions";
   actions.append(
-    rowButton("Next", async () => {
-      renderState(await api("/api/queue/next", {method: "POST", body: JSON.stringify({id: item.id})}));
-    }),
-    rowButton("Up", async () => {
-      renderState(await api("/api/queue/move", {method: "POST", body: JSON.stringify({id: item.id, direction: -1})}));
-    }),
-    rowButton("Down", async () => {
-      renderState(await api("/api/queue/move", {method: "POST", body: JSON.stringify({id: item.id, direction: 1})}));
-    }),
-    rowButton("Remove", async () => {
-      renderState(await api("/api/queue/remove", {method: "POST", body: JSON.stringify({id: item.id})}));
-    })
+    stateButton("Next", "/api/queue/next", {id: item.id}),
+    stateButton("Up", "/api/queue/move", {id: item.id, direction: -1}),
+    stateButton("Down", "/api/queue/move", {id: item.id, direction: 1}),
+    stateButton("Remove", "/api/queue/remove", {id: item.id})
   );
 
   li.append(meta, actions);
@@ -228,8 +220,8 @@ function renderQueueItem(item) {
 function renderHistoryItem(item) {
   const track = item.track;
   return trackRow(track || {id: item.track_id, title: `Track ${item.track_id}`}, [
-    ["Play Now", async () => playNow(item.track_id)],
-    ["Add", async () => addTrack(item.track_id)],
+    ["Queue", async () => addTrack(item.track_id)],
+    ["Play", async () => playNow(item.track_id)],
   ]);
 }
 
@@ -237,7 +229,7 @@ function renderHistory(history) {
   if (history.length === 0) {
     const empty = document.createElement("p");
     empty.className = "hint";
-    empty.textContent = "No tracks played yet";
+    empty.textContent = "No previously played tracks";
     historyEl.replaceChildren(empty);
     return;
   }
@@ -252,15 +244,33 @@ function rowButton(text, action) {
   return button;
 }
 
+function stateButton(text, path, body = null) {
+  return rowButton(text, async () => {
+    await postState(path, body);
+  });
+}
+
+function trackMeta(titleText, subtitleText) {
+  const meta = document.createElement("div");
+  meta.className = "meta";
+
+  const title = document.createElement("div");
+  title.className = "title";
+  title.textContent = titleText;
+
+  const sub = document.createElement("div");
+  sub.className = "sub";
+  sub.textContent = subtitleText;
+
+  meta.append(title, sub);
+  return meta;
+}
+
 function trackRow(track, actions) {
   const row = document.createElement("div");
   row.className = "item";
 
-  const meta = document.createElement("div");
-  meta.className = "meta";
-  meta.innerHTML = `<div class="title"></div><div class="sub"></div>`;
-  meta.querySelector(".title").textContent = track.title;
-  meta.querySelector(".sub").textContent = trackSubtitle(track);
+  const meta = trackMeta(track.title, trackSubtitle(track));
 
   const actionEl = document.createElement("div");
   actionEl.className = "row-actions";
@@ -271,11 +281,17 @@ function trackRow(track, actions) {
 }
 
 async function addTrack(trackID) {
-  renderState(await api("/api/queue", {method: "POST", body: JSON.stringify({track_id: trackID})}));
+  await postState("/api/queue", {track_id: trackID});
 }
 
 async function playNow(trackID) {
-  renderState(await api("/api/playback/play-now", {method: "POST", body: JSON.stringify({track_id: trackID})}));
+  await postState("/api/playback/play-now", {track_id: trackID});
+}
+
+async function postState(path, body = null) {
+  const options = {method: "POST"};
+  if (body) options.body = JSON.stringify(body);
+  renderState(await api(path, options));
 }
 
 function setSyncedTime(target) {
@@ -319,16 +335,6 @@ setInterval(() => {
   }
 }, 500);
 
-async function publishPlayback(path, body = null) {
-  try {
-    const options = {method: "POST"};
-    if (body) options.body = JSON.stringify(body);
-    renderState(await api(path, options));
-  } catch (err) {
-    console.error(err);
-  }
-}
-
 audio.addEventListener("loadedmetadata", () => {
   if (lastState && currentID) {
     syncAudio(lastState);
@@ -347,7 +353,7 @@ audio.addEventListener("ended", () => {
   if (!currentID) {
     return;
   }
-  publishPlayback("/api/playback/ended", {track_id: currentID});
+  postState("/api/playback/ended", {track_id: currentID}).catch(console.error);
 });
 
 audio.addEventListener("timeupdate", () => {
@@ -378,12 +384,13 @@ async function loadLibraryStatus() {
 
 async function runSearch() {
   const q = searchInput.value.trim();
-  searchStatus.textContent = q ? "Searching..." : "Recently added";
   const tracks = await api(`/api/search?q=${encodeURIComponent(q)}`);
-  searchStatus.textContent = q ? `${tracks.length} result${tracks.length === 1 ? "" : "s"}` : "Recently added";
+  if (q !== searchInput.value.trim()) {
+    return;
+  }
   resultsEl.replaceChildren(...tracks.map((track) => trackRow(track, [
-    ["Play Now", async () => playNow(track.id)],
-    ["Add", async () => addTrack(track.id)],
+    ["Queue", async () => addTrack(track.id)],
+    ["Play", async () => playNow(track.id)],
   ])));
 }
 
@@ -394,23 +401,24 @@ document.getElementById("searchForm").addEventListener("submit", async (event) =
 
 searchInput.addEventListener("input", () => {
   clearTimeout(searchTimer);
+  resultsEl.replaceChildren();
   searchTimer = setTimeout(() => {
     runSearch().catch(console.error);
-  }, 180);
+  }, searchDebounceMS);
 });
 
-for (const [id, path] of [["skip", "/api/playback/skip"]]) {
+for (const [id, path] of [["previous", "/api/playback/previous"], ["skip", "/api/playback/skip"]]) {
   document.getElementById(id).addEventListener("click", async () => {
-    renderState(await api(path, {method: "POST"}));
+    await postState(path);
   });
 }
 
 togglePlaybackButton.addEventListener("click", async () => {
   if (lastState && lastState.current && !lastState.paused) {
-    await publishPlayback("/api/playback/pause");
+    await postState("/api/playback/pause");
     return;
   }
-  await publishPlayback("/api/playback/play");
+  await postState("/api/playback/play");
 });
 
 seekInput.addEventListener("input", () => {
@@ -426,7 +434,7 @@ seekInput.addEventListener("change", async () => {
   }
   const positionMS = Math.max(0, Math.round(Number(seekInput.value) * 1000));
   seeking = false;
-  await publishPlayback("/api/playback/seek", {position_ms: positionMS});
+  await postState("/api/playback/seek", {position_ms: positionMS});
 });
 
 volumeInput.addEventListener("input", () => {
@@ -463,7 +471,11 @@ renderPlaybackButton(false);
 loadLocalVolume();
 
 clearQueueButton.addEventListener("click", async () => {
-  renderState(await api("/api/queue/clear", {method: "POST"}));
+  await postState("/api/queue/clear");
+});
+
+clearHistoryButton.addEventListener("click", async () => {
+  await postState("/api/history/clear");
 });
 
 new EventSource("/events").addEventListener("state", (event) => {

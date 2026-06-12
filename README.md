@@ -1,104 +1,107 @@
 # listen-party
 
-`listen-party` is a small LAN music server for office / LAN-party environments.
-It serves one embedded browser UI, indexes local MP3 files, and lets connected
-browsers share one queue and one playback state.
+`listen-party` is a small LAN music server for shared rooms, offices, and
+LAN-party setups. It indexes local MP3 files, serves one embedded browser UI,
+and keeps all connected browsers on one shared playback state.
 
-The project is intentionally simple:
+The project is intentionally plain:
 
-- Go single binary.
-- Static embedded HTML/CSS/JS.
-- SQLite for the local MP3 index.
-- Basic Auth for the current POC.
-- No internet services at runtime.
+- One Go binary.
+- Embedded HTML/CSS/JS.
+- SQLite metadata/search index.
+- Basic Auth.
+- No runtime internet services.
 
 ## Current State
 
 Working:
 
 - Recursive MP3 indexing from configured folders.
+- Incremental rescans skip unchanged files by path and modification time.
+- Scans prune ignored subdirectories such as dot-directories, double-underscore
+  directories, dependency/build folders, and common system recycle/cache folders.
+- Configurable parallel scan workers for metadata parsing.
 - Automatic first-run config creation.
-- SQLite-backed metadata/search cache.
-- Browser UI embedded in the binary.
-- Shared queue.
-- Add, remove, and clear queued tracks.
-- Move queued tracks up, down, or directly to next.
-- Explicit shared play/pause, seek, and skip controls.
-- Play Now from search results or recently played tracks.
-- Track-end auto advance.
-- Server-owned playback state with client convergence for track, play/pause,
-  seek position, and time drift.
+- SQLite-backed metadata and search.
+- Embedded listener UI and admin config UI.
+- Shared current track, queue, queue order, play/pause, seek, skip, previous,
+  and track-end advance.
+- Queue add, remove, clear, move up/down, and move-to-next.
+- Recently played history with clear support.
+- Play immediately from search or history.
+- Dynamic search with 300 ms debounce and server-side result limits.
+- Search results sorted by title ascending.
+- Server-sent events for shared state updates plus a periodic heartbeat.
 - Connected listener count.
-- Recently played history.
-- Browser-local volume and mute controls.
-- Search-as-you-type with recently added tracks as the empty search view.
-- Library track count.
-- SSE state updates and periodic state heartbeat.
+- Browser-local volume and mute.
+- Structured backend logs for startup, scans, config changes, listener
+  connections, playback commands, and important failures.
 
-Known limitation:
+Known limitations:
 
-- Playback synchronization is much stronger than the original native-control
-  model, but still depends on browser media behavior. Browser autoplay policy
-  can stop a tab from making sound until that browser has been interacted with.
-  That refusal is local and is not published back as shared state.
-- Very small timing differences can still happen between browsers. Clients
-  correct drift against server time when the local media element is more than
-  0.1 seconds from the expected position.
-
-Volume and mute are local to the tab session. They survive refresh in the same
-tab, but are not synchronized with other tabs or stored on the server.
+- Browser autoplay policy still applies. A browser that has not been interacted
+  with may refuse to make sound until the user clicks the page.
+- Playback sync is practical, not sample-accurate. Clients correct drift against
+  server time when they are more than 0.1 seconds away from the expected media
+  position.
+- There is one room today. The code keeps a room ID internally so a future room
+  model can be added without changing the core playback object.
 
 ## Synchronization Model
 
-The server is the durable source of truth for global playback:
+The server is the source of truth for global playback:
 
 - Current track.
-- Queue.
-- Queue order.
+- Queue and queue order.
+- Recently played history.
 - Playing or paused.
 - Shared seek position.
 - Track start time.
-- Recently played history.
 - Connected listener count.
 
-Clients receive state through SSE and periodic heartbeats. Each browser then
-keeps its local audio element aligned to that state. Client audio events do not
-become shared commands, except for `ended`, which advances the shared queue when
-the current track finishes.
+Clients subscribe to `/events` with SSE. Every state update carries a revision
+and server timestamp. The browser keeps its local `<audio>` element aligned to
+that state and periodically re-checks drift. Client media events are local
+except for `ended`, which asks the server to advance the shared playback state.
 
-Global state changes come from explicit app controls:
+Volume and mute are intentionally not shared. They are tab-local session
+preferences.
 
-- Play / pause.
-- Seek.
-- Skip.
-- Queue add, remove, and clear.
-- Queue move up, move down, and move to next.
-- Play Now.
+## UI Shape
 
-Volume and mute are intentionally outside the shared state. They are tab-local
-preferences only.
+The listener UI is a full-screen app:
+
+- Left rail: library search.
+- Main area: previously played on the left, upcoming queue on the right.
+- Bottom player: previous, play/pause, next, seek, and local volume.
+
+The queue drains from the top. The top queue item is always the next track.
+Previously played is newest-first. Pressing previous pops the newest history
+item into current playback and returns the current track to the front of the
+upcoming queue.
 
 ## Config
 
-Runtime config is JSON at:
+Runtime config is JSON. By default it lives at:
 
 ```text
 ${UserConfigDir}/listen-party/config.json
 ```
 
-The default SQLite database path is:
+Default database path:
 
 ```text
 ${UserConfigDir}/listen-party/listen-party.sqlite
 ```
 
-If the config file does not exist, the server creates it with these defaults:
+Default config:
 
 ```json
 {
   "addr": "0.0.0.0:8080",
   "music_dirs": ["${UserConfigDir}/listen-party/music"],
   "database_path": "${UserConfigDir}/listen-party/listen-party.sqlite",
+  "scan_workers": 16,
   "auth": {
     "listener": {"username": "default", "password": "default"},
     "admin": {"username": "admin", "password": "admin"}
@@ -106,10 +109,25 @@ If the config file does not exist, the server creates it with these defaults:
 }
 ```
 
-Any configured `music_dirs` path that does not exist is created as an empty
-directory at startup.
+If the config file does not exist, the server creates it. Any configured
+`music_dirs` that do not exist are created at startup.
 
-The server prints the resolved config directory at startup.
+Use a custom config path:
+
+```sh
+./build/lp -config ./config.json
+```
+
+The admin page can edit the config:
+
+```text
+http://localhost:8080/admin
+```
+
+Changing `addr` or `database_path` requires a restart. Updating auth
+credentials, music directories, or scan worker count applies immediately; use
+the admin rescan button to refresh the library after changing music folders.
+`scan_workers` must be between 1 and 256.
 
 ## Build And Run
 
@@ -119,22 +137,22 @@ Run from the repo root:
 go run .
 ```
 
-Build:
+Build for the current platform:
 
 ```sh
 go build -o build/lp .
 ```
 
-Run a built binary:
+Build using the Makefile:
+
+```sh
+make compile
+```
+
+Run:
 
 ```sh
 ./build/lp
-```
-
-Use a custom config path:
-
-```sh
-./build/lp -config ./config.json
 ```
 
 Open:
@@ -155,7 +173,27 @@ Default admin login:
 admin / admin
 ```
 
-## Development Notes
+## Deployment
+
+For a simple LAN deployment:
+
+1. Build the binary on the target machine or cross-compile for it.
+2. Create a config file with the listen address, music folders, database path,
+   and credentials.
+3. Run the binary with `-config /path/to/config.json`.
+4. Put MP3 files under one of the configured `music_dirs`.
+5. Open the listener UI from LAN clients.
+
+The binary serves its own static UI and media endpoints. No separate web server
+is required for basic LAN use. If putting it behind a reverse proxy, preserve
+SSE streaming for `/events`.
+
+Logs are written to stdout/stderr through Go `slog`. They are intentionally
+event-focused: startup, scan summaries, admin config changes, listener
+connect/disconnect, playback and queue commands, and warnings for failed scans,
+missing tracks, media file errors, and SSE write failures.
+
+## Development
 
 Useful checks:
 
@@ -170,18 +208,33 @@ If port `8080` is stuck during local development:
 fuser -k 8080/tcp
 ```
 
-## Future Work
+The main files are:
+
+- `main.go`: startup, config loading, scan, HTTP server.
+- `config.go`: config defaults, validation, and persistence.
+- `internal/library/library.go`: SQLite index ownership, scan support, search.
+- `playback.go`: shared playback state machine.
+- `server.go`: HTTP API, SSE, media serving, view shaping.
+- `frontend/index.html`, `frontend/style.css`, `frontend/app.js`: listener UI.
+- `frontend/admin.html`, `frontend/admin.js`: admin config UI.
+- `web.go`: embedded filesystem.
+
+## Future Direction
 
 Highest priority:
 
-- Add focused browser-level/manual test cases for two-tab synchronization.
-- Keep hardening the current synchronization model without adding complex client
-  state machines.
-
+- Browser-level/manual test coverage for multi-tab synchronization.
+- Keep the playback model simple while hardening edge cases.
 Next:
 
-- Editable admin page for config and library management.
-- Separate admin-only auth surface for administration.
-- Scan stats: last scan time, indexed count, added/removed/skipped files.
-- Future room model: dynamic rooms with join secrets.
-- OAuth-capable auth abstraction for later deployment.
+- Evaluate SQLite WAL mode for better read/write overlap during scans. Prefer
+  enabling it only after confirming the database lives on local storage, not a
+  network/synced path.
+- Consider storing modification times with nanosecond precision if same-second
+  file edits become a real concern.
+- Add configurable ignored directory names if the built-in scanner pruning is
+  not enough for real library layouts.
+- Consider SQLite FTS if search becomes slow around very large libraries.
+- Better admin-only surface and clearer listener/admin separation.
+- Optional room model with join secrets.
+- Authentication abstraction for non-LAN deployments.

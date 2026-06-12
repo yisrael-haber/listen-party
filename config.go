@@ -22,8 +22,14 @@ type Config struct {
 	Addr         string     `json:"addr"`
 	MusicDirs    []string   `json:"music_dirs"`
 	DatabasePath string     `json:"database_path"`
+	ScanWorkers  int        `json:"scan_workers"`
 	Auth         AuthConfig `json:"auth"`
 }
+
+const (
+	defaultScanWorkers = 16
+	maxScanWorkers     = 256
+)
 
 func DefaultConfigDir() (string, error) {
 	base, err := os.UserConfigDir()
@@ -160,6 +166,7 @@ func NewDefaultConfig() (Config, error) {
 		Addr:         "0.0.0.0:8080",
 		MusicDirs:    []string{musicDir},
 		DatabasePath: dbPath,
+		ScanWorkers:  defaultScanWorkers,
 		Auth: AuthConfig{
 			Listener: defaultCreds,
 			Admin:    adminCreds,
@@ -170,6 +177,12 @@ func NewDefaultConfig() (Config, error) {
 func (c Config) Validate() error {
 	if len(c.MusicDirs) == 0 {
 		return errors.New("music_dirs must contain at least one directory")
+	}
+	if c.ScanWorkers <= 0 {
+		return errors.New("scan_workers must be greater than zero")
+	}
+	if c.ScanWorkers > maxScanWorkers {
+		return fmt.Errorf("scan_workers must be %d or less", maxScanWorkers)
 	}
 	for _, dir := range c.MusicDirs {
 		if dir == "" {
@@ -195,6 +208,9 @@ func (c *Config) ApplyDefaults() error {
 			return err
 		}
 		c.DatabasePath = dbPath
+	}
+	if c.ScanWorkers == 0 {
+		c.ScanWorkers = defaultScanWorkers
 	}
 	return nil
 }

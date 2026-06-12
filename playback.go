@@ -135,6 +135,28 @@ func (p *Playback) Skip(roomID string) PlaybackState {
 	return p.stateLocked()
 }
 
+func (p *Playback) Previous(roomID string) PlaybackState {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if len(p.history) == 0 {
+		return p.stateLocked()
+	}
+	item := p.history[0]
+	p.history = p.history[1:]
+	if p.current != 0 {
+		p.nextID++
+		p.queue = append([]QueueItem{{ID: p.nextID, TrackID: p.current, AddedAt: time.Now()}}, p.queue...)
+	}
+	p.playID++
+	p.current = item.TrackID
+	p.started = time.Now()
+	p.paused = false
+	p.pausePos = 0
+	p.bumpLocked()
+	return p.stateLocked()
+}
+
 func (p *Playback) Ended(roomID string, trackID int64) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -203,6 +225,17 @@ func (p *Playback) Clear(roomID string) PlaybackState {
 
 	if len(p.queue) > 0 {
 		p.queue = nil
+		p.bumpLocked()
+	}
+	return p.stateLocked()
+}
+
+func (p *Playback) ClearHistory(roomID string) PlaybackState {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if len(p.history) > 0 {
+		p.history = nil
 		p.bumpLocked()
 	}
 	return p.stateLocked()

@@ -96,6 +96,33 @@ func TestEndedOnlyAdvancesMatchingCurrentTrack(t *testing.T) {
 	}
 }
 
+func TestPreviousPlaysNewestHistoryAndReturnsCurrentToQueue(t *testing.T) {
+	p := NewPlayback("default")
+	p.Add("default", 10)
+	if _, err := p.Play("default"); err != nil {
+		t.Fatalf("play: %v", err)
+	}
+	p.Add("default", 20)
+	state := p.Skip("default")
+	if state.CurrentTrackID != 20 {
+		t.Fatalf("current after skip = %d, want 20", state.CurrentTrackID)
+	}
+	if len(state.History) != 1 || state.History[0].TrackID != 10 {
+		t.Fatalf("history = %#v, want track 10", state.History)
+	}
+
+	state = p.Previous("default")
+	if state.CurrentTrackID != 10 {
+		t.Fatalf("current after previous = %d, want 10", state.CurrentTrackID)
+	}
+	if len(state.History) != 0 {
+		t.Fatalf("history length after previous = %d, want 0", len(state.History))
+	}
+	if len(state.Queue) != 1 || state.Queue[0].TrackID != 20 {
+		t.Fatalf("queue after previous = %#v, want current track 20 first", state.Queue)
+	}
+}
+
 func TestPlaybackIDChangesForEachStartedTrack(t *testing.T) {
 	p := NewPlayback("default")
 	p.Add("default", 10)
@@ -150,6 +177,26 @@ func TestPlayNowStartsTrackAndRecordsHistory(t *testing.T) {
 	}
 	if len(state.History) != 1 || state.History[0].TrackID != 10 {
 		t.Fatalf("history = %#v, want previous track 10", state.History)
+	}
+}
+
+func TestClearHistory(t *testing.T) {
+	p := NewPlayback("default")
+	p.Add("default", 10)
+	if _, err := p.Play("default"); err != nil {
+		t.Fatalf("play: %v", err)
+	}
+	state := p.PlayNow("default", 20)
+	if len(state.History) != 1 {
+		t.Fatalf("history length = %d, want 1", len(state.History))
+	}
+
+	state = p.ClearHistory("default")
+	if len(state.History) != 0 {
+		t.Fatalf("history length after clear = %d, want 0", len(state.History))
+	}
+	if state.CurrentTrackID != 20 {
+		t.Fatalf("current after clear = %d, want 20", state.CurrentTrackID)
 	}
 }
 

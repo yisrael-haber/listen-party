@@ -9,7 +9,8 @@ import (
 
 func TestValidateRequiresUsefulConfig(t *testing.T) {
 	cfg := Config{
-		MusicDirs: []string{"/music"},
+		MusicDirs:   []string{"/music"},
+		ScanWorkers: defaultScanWorkers,
 		Auth: AuthConfig{
 			Listener: Credentials{Username: "listener", Password: "listen"},
 			Admin:    Credentials{Username: "admin", Password: "admin"},
@@ -22,6 +23,25 @@ func TestValidateRequiresUsefulConfig(t *testing.T) {
 	cfg.Auth.Admin.Password = ""
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("missing admin password accepted")
+	}
+}
+
+func TestValidateScanWorkers(t *testing.T) {
+	cfg := Config{
+		MusicDirs:   []string{"/music"},
+		ScanWorkers: defaultScanWorkers,
+		Auth: AuthConfig{
+			Listener: Credentials{Username: "listener", Password: "listen"},
+			Admin:    Credentials{Username: "admin", Password: "admin"},
+		},
+	}
+	cfg.ScanWorkers = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("zero scan_workers accepted")
+	}
+	cfg.ScanWorkers = maxScanWorkers + 1
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("too many scan_workers accepted")
 	}
 }
 
@@ -47,6 +67,9 @@ func TestLoadConfigCreatesDefaultConfigAndMusicDir(t *testing.T) {
 	}
 	if cfg.Auth.Admin != (Credentials{Username: "admin", Password: "admin"}) {
 		t.Fatalf("Admin creds = %#v, want admin/admin", cfg.Auth.Admin)
+	}
+	if cfg.ScanWorkers != defaultScanWorkers {
+		t.Fatalf("ScanWorkers = %d, want %d", cfg.ScanWorkers, defaultScanWorkers)
 	}
 	if info, err := os.Stat(wantMusic); err != nil || !info.IsDir() {
 		t.Fatalf("music dir was not created: info=%v err=%v", info, err)
@@ -96,6 +119,7 @@ func TestSaveConfigWritesConfigAndCreatesMusicDirs(t *testing.T) {
 		Addr:         "127.0.0.1:7777",
 		MusicDirs:    []string{musicDir},
 		DatabasePath: filepath.Join(dir, "db.sqlite"),
+		ScanWorkers:  4,
 		Auth: AuthConfig{
 			Listener: Credentials{Username: "listener", Password: "listen"},
 			Admin:    Credentials{Username: "admin", Password: "admin"},

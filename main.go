@@ -10,6 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	musiclib "listen-party/internal/library"
 )
 
 func main() {
@@ -33,30 +35,24 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("listen-party config directory", "path", configDir)
+	slog.Info("listen-party config loaded",
+		"path", resolvedConfigPath,
+		"addr", cfg.Addr,
+		"database_path", cfg.DatabasePath,
+		"music_dirs", len(cfg.MusicDirs),
+	)
 
-	db, err := OpenDB(cfg.DatabasePath)
+	lib, err := musiclib.Open(context.Background(), cfg.DatabasePath, cfg.MusicDirs, cfg.ScanWorkers)
 	if err != nil {
 		slog.Error("open library database", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
-
-	store := NewStore(db)
-	if err := store.Migrate(context.Background()); err != nil {
-		slog.Error("migrate library database", "error", err)
-		os.Exit(1)
-	}
-
-	scanner := NewScanner(store, cfg.MusicDirs)
-	if err := scanner.Scan(context.Background()); err != nil {
-		slog.Warn("initial library scan failed", "error", err)
-	}
+	defer lib.Close()
 
 	app := NewServer(ServerOptions{
 		Auth:       NewBasicAuth(cfg.Auth),
-		Library:    store,
+		Library:    lib,
 		Player:     NewPlayback("default"),
-		Scanner:    scanner,
 		Config:     cfg,
 		ConfigPath: resolvedConfigPath,
 		RoomID:     "default",
@@ -65,6 +61,25 @@ func main() {
 
 	serverCtx, stopServer := context.WithCancel(context.Background())
 	defer stopServer()
+
+	go func() {
+		scanStarted := time.Now()
+		slog.Info("initial library scan started", "music_dirs", len(cfg.MusicDirs), "scan_workers", cfg.ScanWorkers)
+		if err := lib.Scan(serverCtx); err != nil {
+			if err == context.Canceled {
+				slog.Info("initial library scan canceled", "duration", time.Since(scanStarted))
+				return
+			}
+			slog.Warn("initial library scan failed", "duration", time.Since(scanStarted), "error", err)
+			return
+		}
+		count, err := lib.Count(context.Background())
+		if err != nil {
+			slog.Warn("count library after initial scan", "duration", time.Since(scanStarted), "error", err)
+			return
+		}
+		slog.Info("initial library scan completed", "duration", time.Since(scanStarted), "tracks", count)
+	}()
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,

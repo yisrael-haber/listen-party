@@ -5,16 +5,24 @@ import (
 	"io/fs"
 )
 
-//go:embed index.html style.css app.js
+//go:embed frontend/index.html frontend/style.css frontend/app.js
 var webFS embed.FS
 
-//go:embed admin.html admin.js
+//go:embed frontend/admin.html frontend/admin.js
 var adminFS embed.FS
 
 func webRoot() fs.FS {
-	return webFS
+	root, err := fs.Sub(webFS, "frontend")
+	if err != nil {
+		panic(err)
+	}
+	return root
 }
 
 func adminRoot() fs.FS {
-	return adminFS
+	root, err := fs.Sub(adminFS, "frontend")
+	if err != nil {
+		panic(err)
+	}
+	return root
 }

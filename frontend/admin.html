@@ -16,6 +16,7 @@
     <section class="controls">
       <button id="rescan" type="button">Rescan</button>
       <span id="rescanStatus" class="status" role="status" aria-live="polite"></span>
+      <span id="scanStatus" class="status"></span>
     </section>
 
     <section class="config-panel">
@@ -35,6 +36,10 @@
         <label>
           <span>Database path</span>
           <input id="configDatabasePath" name="database_path" autocomplete="off">
+        </label>
+        <label>
+          <span>Scan workers</span>
+          <input id="configScanWorkers" name="scan_workers" type="number" min="1" max="256" step="1">
         </label>
         <div class="config-grid">
           <label>
