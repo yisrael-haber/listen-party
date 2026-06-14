@@ -26,6 +26,9 @@ Working:
 - Embedded listener UI and admin config UI.
 - Embedded PocketBase auth/admin dashboard mounted at `/authAdmin`.
 - Dedicated listener/admin app login mounted at `/login`.
+- Configurable rooms with one isolated shared playback state per room.
+- Public room access for every authenticated app user, with private room access
+  driven by PocketBase user room IDs, groups, and admin role.
 - Shared current track, queue, queue order, play/pause, seek, skip, previous,
   and track-end advance.
 - Queue add, remove, clear, move up/down, and move-to-next.
@@ -46,12 +49,10 @@ Known limitations:
 - Playback sync is practical, not sample-accurate. Clients correct drift against
   server time when they are more than 0.1 seconds away from the expected media
   position.
-- There is one room today. The code keeps a room ID internally so a future room
-  model can be added without changing the core playback object.
 
 ## Synchronization Model
 
-The server is the source of truth for global playback:
+The server is the source of truth for playback in each room:
 
 - Current track.
 - Queue and queue order.
@@ -61,10 +62,14 @@ The server is the source of truth for global playback:
 - Track start time.
 - Connected listener count.
 
-Clients subscribe to `/events` with SSE. Every state update carries a revision
-and server timestamp. The browser keeps its local `<audio>` element aligned to
-that state and periodically re-checks drift. Client media events are local
-except for `ended`, which asks the server to advance the shared playback state.
+Clients subscribe to `/rooms/{room}/events` with SSE. Every state update carries
+a revision and server timestamp. The browser keeps its local `<audio>` element
+aligned to that state and periodically re-checks drift. Client media events are
+local except for `ended`, which asks the server to advance the shared playback
+state. The server also checks indexed track duration during room state reads and
+SSE heartbeats so playback advances even if a browser misses the `ended` event.
+
+Removing a room from config closes existing SSE subscriptions for that room.
 
 Volume and mute are intentionally not shared. They are tab-local session
 preferences.
@@ -104,6 +109,13 @@ Default config:
   "music_dirs": ["${UserConfigDir}/listen-party/music"],
   "database_path": "${UserConfigDir}/listen-party/listen-party.sqlite",
   "scan_workers": 16,
+  "rooms": [
+    {
+      "id": "public",
+      "name": "Public Room",
+      "public": true
+    }
+  ],
   "auth": {
     "pocketbase": {
       "data_dir": "${UserConfigDir}/listen-party/auth",
@@ -178,10 +190,35 @@ listen-party username on first Keycloak login. Set a password under the user's
 Credentials tab and turn off "Temporary" if you do not want Keycloak to force a
 password change on first login.
 
+To sync Keycloak groups into listen-party room access, configure the Keycloak
+client to include a `groups` claim in the OIDC userinfo response. On each
+Keycloak login, listen-party copies that claim into the PocketBase
+`users.groups` field. Missing `groups` claims leave existing PocketBase groups
+unchanged.
+
 Changing `addr`, `database_path`, or auth provider settings requires a restart.
 Updating music directories or scan worker count applies immediately; use the
 admin rescan button to refresh the library after changing music folders.
-`scan_workers` must be between 1 and 256.
+Updating rooms also applies immediately for new room enumeration and API
+requests. `scan_workers` must be between 1 and 256.
+
+Room IDs must be lowercase URL-safe text. A public room is visible to every
+authenticated app user. Admin users can access every room. For private room
+access, edit users in `/authAdmin` and set `room_ids` and/or `groups` as
+comma-separated values. Room `allowed_groups` are configured in `config.json`.
+Room config updates preserve playback state for unchanged room IDs and close
+listeners for removed room IDs.
+
+Example private room:
+
+```json
+{
+  "id": "staff",
+  "name": "Staff Room",
+  "public": false,
+  "allowed_groups": ["staff"]
+}
+```
 
 ## Build And Run
 
@@ -202,6 +239,18 @@ Build using the Makefile:
 ```sh
 make compile
 ```
+
+Create a portable LAN package with both built executables and the current
+config directory:
+
+```sh
+make package
+```
+
+Packages are written to `publish/listen-party-YYYYMMDD-HHMMSS.tar.gz`. The
+archive contains `bin/lp`, `bin/lp.exe`, and `config/listen-party/`. The config
+copy includes PocketBase auth data, room config, and the SQLite library DB, so
+treat the archive as sensitive.
 
 Run:
 
@@ -233,7 +282,7 @@ For a simple LAN deployment:
 
 The binary serves its own static UI and media endpoints. No separate web server
 is required for basic LAN use. If putting it behind a reverse proxy, preserve
-SSE streaming for `/events`.
+SSE streaming for `/rooms/{room}/events`.
 
 Logs are written to stdout/stderr through Go `slog`. They are intentionally
 event-focused: startup, scan summaries, admin config changes, listener
@@ -262,6 +311,7 @@ The main files are:
 - `internal/auth/auth.go`: PocketBase auth setup, bootstrap, and token checks.
 - `internal/library/library.go`: SQLite index ownership, scan support, search.
 - `playback.go`: shared playback state machine.
+- `rooms.go`: configured room catalog and room access checks.
 - `server.go`: HTTP API, SSE, media serving, view shaping.
 - `frontend/index.html`, `frontend/style.css`, `frontend/app.js`: listener UI.
 - `frontend/admin.html`, `frontend/admin.js`: admin config UI.
@@ -284,5 +334,5 @@ Next:
   not enough for real library layouts.
 - Consider SQLite FTS if search becomes slow around very large libraries.
 - Better admin-only surface and clearer listener/admin separation.
-- Optional room model with join secrets.
+- Optional room join secrets.
 - Authentication abstraction for non-LAN deployments.

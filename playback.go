@@ -66,7 +66,7 @@ func NewPlayback(roomID string) *Playback {
 	}
 }
 
-func (p *Playback) Add(roomID string, trackID int64, requestedBy string) PlaybackState {
+func (p *Playback) Add(trackID int64, requestedBy string) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -76,7 +76,7 @@ func (p *Playback) Add(roomID string, trackID int64, requestedBy string) Playbac
 	return p.stateLocked()
 }
 
-func (p *Playback) Play(roomID string) (PlaybackState, error) {
+func (p *Playback) Play() (PlaybackState, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -93,7 +93,7 @@ func (p *Playback) Play(roomID string) (PlaybackState, error) {
 	return p.stateLocked(), nil
 }
 
-func (p *Playback) PlayNow(roomID string, trackID int64, requestedBy string) PlaybackState {
+func (p *Playback) PlayNow(trackID int64, requestedBy string) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -109,7 +109,7 @@ func (p *Playback) PlayNow(roomID string, trackID int64, requestedBy string) Pla
 	return p.stateLocked()
 }
 
-func (p *Playback) Pause(roomID string) PlaybackState {
+func (p *Playback) Pause() PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -124,7 +124,7 @@ func (p *Playback) Pause(roomID string) PlaybackState {
 	return p.stateLocked()
 }
 
-func (p *Playback) Seek(roomID string, positionMS int64) PlaybackState {
+func (p *Playback) Seek(positionMS int64) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -142,7 +142,7 @@ func (p *Playback) Seek(roomID string, positionMS int64) PlaybackState {
 	return p.stateLocked()
 }
 
-func (p *Playback) Skip(roomID string) PlaybackState {
+func (p *Playback) Skip() PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -150,7 +150,7 @@ func (p *Playback) Skip(roomID string) PlaybackState {
 	return p.stateLocked()
 }
 
-func (p *Playback) Previous(roomID string) PlaybackState {
+func (p *Playback) Previous() PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -173,7 +173,7 @@ func (p *Playback) Previous(roomID string) PlaybackState {
 	return p.stateLocked()
 }
 
-func (p *Playback) Ended(roomID string, trackID int64) PlaybackState {
+func (p *Playback) Ended(trackID int64) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -183,7 +183,7 @@ func (p *Playback) Ended(roomID string, trackID int64) PlaybackState {
 	return p.stateLocked()
 }
 
-func (p *Playback) Remove(roomID string, queueItemID int64) PlaybackState {
+func (p *Playback) Remove(queueItemID int64) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -197,7 +197,7 @@ func (p *Playback) Remove(roomID string, queueItemID int64) PlaybackState {
 	return p.stateLocked()
 }
 
-func (p *Playback) Move(roomID string, queueItemID int64, delta int) PlaybackState {
+func (p *Playback) Move(queueItemID int64, delta int) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -216,7 +216,7 @@ func (p *Playback) Move(roomID string, queueItemID int64, delta int) PlaybackSta
 	return p.stateLocked()
 }
 
-func (p *Playback) MoveToNext(roomID string, queueItemID int64) PlaybackState {
+func (p *Playback) MoveToNext(queueItemID int64) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -235,7 +235,7 @@ func (p *Playback) MoveToNext(roomID string, queueItemID int64) PlaybackState {
 	return p.stateLocked()
 }
 
-func (p *Playback) Clear(roomID string) PlaybackState {
+func (p *Playback) Clear() PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -246,7 +246,7 @@ func (p *Playback) Clear(roomID string) PlaybackState {
 	return p.stateLocked()
 }
 
-func (p *Playback) ClearHistory(roomID string) PlaybackState {
+func (p *Playback) ClearHistory() PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -257,13 +257,13 @@ func (p *Playback) ClearHistory(roomID string) PlaybackState {
 	return p.stateLocked()
 }
 
-func (p *Playback) Snapshot(roomID string) PlaybackState {
+func (p *Playback) Snapshot() PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.stateLocked()
 }
 
-func (p *Playback) Subscribe(roomID string, listener ActiveListener) (<-chan PlaybackState, func()) {
+func (p *Playback) Subscribe(listener ActiveListener) (<-chan PlaybackState, func()) {
 	ch := make(chan PlaybackState, 8)
 	p.mu.Lock()
 	if p.notify == nil {
@@ -282,6 +282,17 @@ func (p *Playback) Subscribe(roomID string, listener ActiveListener) (<-chan Pla
 			p.bumpLocked()
 		}
 	}
+}
+
+func (p *Playback) CloseSubscribers() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for ch := range p.notify {
+		delete(p.notify, ch)
+		close(ch)
+	}
+	p.bumpLocked()
 }
 
 func (p *Playback) startNextLocked() bool {

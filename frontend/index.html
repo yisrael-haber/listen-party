@@ -11,9 +11,10 @@
     <aside class="library-rail">
       <div class="user-strip">
         <span id="currentUser" class="username"></span>
-        <form action="/logout" method="post">
+        <form id="logoutForm" action="/logout" method="post">
           <button class="secondary compact" type="submit">Logout</button>
         </form>
+        <select id="roomSelect" class="room-select" aria-label="Room"></select>
       </div>
 
       <section class="controls">

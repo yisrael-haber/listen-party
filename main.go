@@ -61,10 +61,9 @@ func main() {
 		Auth:       authSvc,
 		AuthRoutes: authSvc.Handler(),
 		Library:    lib,
-		Player:     NewPlayback("default"),
+		Rooms:      NewRoomManager(cfg.Rooms),
 		Config:     cfg,
 		ConfigPath: resolvedConfigPath,
-		RoomID:     "default",
 		Logger:     slog.Default(),
 	})
 

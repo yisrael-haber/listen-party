@@ -14,6 +14,7 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+	pbauth "github.com/pocketbase/pocketbase/tools/auth"
 	"github.com/pocketbase/pocketbase/tools/hook"
 	"github.com/pocketbase/pocketbase/ui"
 )
@@ -32,9 +33,11 @@ const (
 )
 
 type UserInfo struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	Role     Role   `json:"role"`
+	ID       string   `json:"id"`
+	Username string   `json:"username"`
+	Role     Role     `json:"role"`
+	RoomIDs  []string `json:"room_ids"`
+	Groups   []string `json:"groups"`
 }
 
 var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
@@ -90,7 +93,7 @@ if (keycloakButton) {
       redirectURL,
       returnTo: new URLSearchParams(location.search).get("return") || "/",
     }));
-    location.href = provider.authURL + encodeURIComponent(redirectURL);
+    location.href = provider.authURL + encodeURIComponent(redirectURL) + "&prompt=login";
   });
 }
 if (location.pathname === "/login/oauth/callback") {
@@ -254,6 +257,8 @@ func (s *Service) CurrentUser(r *http.Request) (UserInfo, bool) {
 		ID:       record.Id,
 		Username: record.GetString("username"),
 		Role:     role,
+		RoomIDs:  splitMetadataList(record.GetString("room_ids")),
+		Groups:   splitMetadataList(record.GetString("groups")),
 	}, true
 }
 
@@ -343,6 +348,8 @@ func bindOAuthDefaults(app core.App) {
 			if e.Collection.Name != usersCollection {
 				return e.Next()
 			}
+			groups, hasGroups := oauthGroups(e.OAuth2User)
+			groupValue := strings.Join(groups, ", ")
 			if e.CreateData == nil {
 				e.CreateData = map[string]any{}
 			}
@@ -357,7 +364,17 @@ func bindOAuthDefaults(app core.App) {
 					e.CreateData["username"] = e.OAuth2User.Username
 				}
 			}
-			return e.Next()
+			if hasGroups {
+				e.CreateData["groups"] = groupValue
+			}
+			if err := e.Next(); err != nil {
+				return err
+			}
+			if hasGroups && e.Record != nil && e.Record.GetString("groups") != groupValue {
+				e.Record.Set("groups", groupValue)
+				return e.App.Save(e.Record)
+			}
+			return nil
 		},
 	})
 }
@@ -431,6 +448,22 @@ func ensureUserMetadata(app core.App) error {
 		})
 		changed = true
 	}
+	if collection.Fields.GetByName("room_ids") == nil {
+		collection.Fields.Add(&core.TextField{
+			Name: "room_ids",
+			Help: "Comma-separated listen-party room IDs this user can access.",
+			Max:  1000,
+		})
+		changed = true
+	}
+	if collection.Fields.GetByName("groups") == nil {
+		collection.Fields.Add(&core.TextField{
+			Name: "groups",
+			Help: "Comma-separated listen-party groups for room access.",
+			Max:  1000,
+		})
+		changed = true
+	}
 	if !collection.PasswordAuth.Enabled || !slices.Equal(collection.PasswordAuth.IdentityFields, []string{"username"}) {
 		collection.PasswordAuth.Enabled = true
 		collection.PasswordAuth.IdentityFields = []string{"username"}
@@ -476,7 +509,7 @@ func syncMissingUserColumns(app core.App, collection *core.Collection) error {
 	if err != nil {
 		return err
 	}
-	for _, fieldName := range []string{"username", "enabled", "app_role"} {
+	for _, fieldName := range []string{"username", "enabled", "app_role", "room_ids", "groups"} {
 		if slices.Contains(columns, fieldName) {
 			continue
 		}
@@ -489,6 +522,58 @@ func syncMissingUserColumns(app core.App, collection *core.Collection) error {
 		}
 	}
 	return nil
+}
+
+func splitMetadataList(value string) []string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\t' || r == ' '
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" && !slices.Contains(out, part) {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func oauthGroups(user *pbauth.AuthUser) ([]string, bool) {
+	if user == nil || user.RawUser == nil {
+		return nil, false
+	}
+	raw, ok := user.RawUser["groups"]
+	if !ok {
+		return nil, false
+	}
+	return normalizeOAuthGroups(raw), true
+}
+
+func normalizeOAuthGroups(raw any) []string {
+	var values []string
+	switch groups := raw.(type) {
+	case []string:
+		values = groups
+	case []any:
+		for _, item := range groups {
+			if value, ok := item.(string); ok {
+				values = append(values, value)
+			}
+		}
+	case string:
+		values = strings.FieldsFunc(groups, func(r rune) bool {
+			return r == ',' || r == '\n' || r == '\t'
+		})
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		value = strings.TrimPrefix(value, "/")
+		if value != "" && !slices.Contains(out, value) {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func buildHandler(app core.App, cfg Config) (http.Handler, error) {

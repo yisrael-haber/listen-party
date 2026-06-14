@@ -45,6 +45,58 @@ func TestValidateScanWorkers(t *testing.T) {
 	}
 }
 
+func TestValidateRooms(t *testing.T) {
+	cfg := Config{
+		MusicDirs:   []string{"/music"},
+		ScanWorkers: defaultScanWorkers,
+		Rooms: []RoomConfig{
+			{ID: "public", Name: "Public Room", Public: true},
+			{ID: "office", Name: "Office", AllowedGroups: []string{"staff"}, AllowedRoles: []string{"listener"}},
+		},
+		Auth: AuthConfig{
+			PocketBase: appauthConfig("/auth"),
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid rooms rejected: %v", err)
+	}
+
+	cfg.Rooms[1].ID = "Bad Room"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("invalid room id accepted")
+	}
+	cfg.Rooms[1].ID = "office"
+	cfg.Rooms[1].AllowedRoles = []string{"owner"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("invalid room role accepted")
+	}
+}
+
+func TestApplyDefaultsNormalizesRooms(t *testing.T) {
+	cfg := Config{
+		MusicDirs:   []string{"/music"},
+		ScanWorkers: defaultScanWorkers,
+		Rooms: []RoomConfig{{
+			ID:            " public ",
+			Name:          " Public Room ",
+			Public:        true,
+			AllowedGroups: []string{" staff ", "staff", ""},
+		}},
+		Auth: AuthConfig{
+			PocketBase: appauthConfig("/auth"),
+		},
+	}
+	if err := cfg.ApplyDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Rooms[0].ID != "public" || cfg.Rooms[0].Name != "Public Room" {
+		t.Fatalf("room = %#v, want trimmed id/name", cfg.Rooms[0])
+	}
+	if len(cfg.Rooms[0].AllowedGroups) != 1 || cfg.Rooms[0].AllowedGroups[0] != "staff" {
+		t.Fatalf("allowed groups = %#v, want [staff]", cfg.Rooms[0].AllowedGroups)
+	}
+}
+
 func TestLoadConfigCreatesDefaultConfigAndMusicDir(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)

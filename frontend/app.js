@@ -19,6 +19,8 @@ const volumeInput = document.getElementById("volume");
 const searchInput = document.getElementById("q");
 const libraryStatus = document.getElementById("libraryStatus");
 const currentUserEl = document.getElementById("currentUser");
+const roomSelect = document.getElementById("roomSelect");
+const logoutForm = document.getElementById("logoutForm");
 const volumeStorageKey = "listen-party-volume";
 const mutedStorageKey = "listen-party-muted";
 const syncToleranceSeconds = 0.1;
@@ -36,6 +38,27 @@ let localMuted = false;
 let audioContext = null;
 let gainNode = null;
 let mediaSource = null;
+let events = null;
+let endedPostPlaybackID = 0;
+
+function currentRoomIDFromPath() {
+  const match = location.pathname.match(/^\/rooms\/([^/]+)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+let currentRoomID = currentRoomIDFromPath();
+
+function roomAPI(path) {
+  return `/rooms/${encodeURIComponent(currentRoomID)}${path}`;
+}
+
+function closeEvents() {
+  if (!events) {
+    return;
+  }
+  events.close();
+  events = null;
+}
 
 function label(track) {
   if (!track) return "";
@@ -57,18 +80,23 @@ function formatTime(seconds) {
 }
 
 function mediaDuration() {
-  return Number.isFinite(audio.duration) ? audio.duration : 0;
+  if (Number.isFinite(audio.duration) && audio.duration > 0) {
+    return audio.duration;
+  }
+  const indexedMS = lastState?.current?.duration_ms || 0;
+  return indexedMS > 0 ? indexedMS / 1000 : 0;
 }
 
 function setSeekUI(position) {
   const duration = mediaDuration();
-  const max = Math.max(duration, position, 0);
+  const max = duration > 0 ? duration : Math.max(position, 0);
+  const value = Math.min(position, max);
   seekInput.max = String(Math.ceil(max));
   seekInput.disabled = !currentID;
   if (!seeking) {
-    seekInput.value = String(Math.min(position, max));
+    seekInput.value = String(value);
   }
-  elapsedEl.textContent = formatTime(seeking ? Number(seekInput.value) : position);
+  elapsedEl.textContent = formatTime(seeking ? Number(seekInput.value) : value);
   durationEl.textContent = formatTime(duration);
 }
 
@@ -184,6 +212,7 @@ function renderState(state) {
     if (currentPlaybackID !== state.playback_id) {
       currentID = current.id;
       currentPlaybackID = state.playback_id;
+      endedPostPlaybackID = 0;
       audio.src = `/media/${current.id}`;
       audio.load();
     }
@@ -271,7 +300,7 @@ function rowButton(text, action) {
 
 function stateButton(text, path, body = null) {
   return rowButton(text, async () => {
-    await postState(path, body);
+    await postState(roomAPI(path), body);
   });
 }
 
@@ -325,11 +354,11 @@ function renderSubtitle(element, subtitleText, requestedBy = "") {
 }
 
 async function addTrack(trackID) {
-  await postState("/api/queue", {track_id: trackID});
+  await postState(roomAPI("/api/queue"), {track_id: trackID});
 }
 
 async function playNow(trackID) {
-  await postState("/api/playback/play-now", {track_id: trackID});
+  await postState(roomAPI("/api/playback/play-now"), {track_id: trackID});
 }
 
 async function postState(path, body = null) {
@@ -356,6 +385,13 @@ function syncAudio(state) {
     return;
   }
   const target = playbackPosition(state);
+  const duration = mediaDuration();
+  if (!state.paused && duration > 0 && target > duration + 1.5 && currentID && endedPostPlaybackID !== currentPlaybackID) {
+    endedPostPlaybackID = currentPlaybackID;
+    postState(roomAPI("/api/playback/ended"), {track_id: currentID}).catch(console.error);
+    setSeekUI(duration);
+    return;
+  }
   setSeekUI(target);
   if (state.paused) {
     setSyncedTime(target);
@@ -397,7 +433,7 @@ audio.addEventListener("ended", () => {
   if (!currentID) {
     return;
   }
-  postState("/api/playback/ended", {track_id: currentID}).catch(console.error);
+  postState(roomAPI("/api/playback/ended"), {track_id: currentID}).catch(console.error);
 });
 
 audio.addEventListener("timeupdate", () => {
@@ -436,6 +472,27 @@ async function loadCurrentUser() {
   }
 }
 
+async function loadRooms() {
+  const info = await api("/api/rooms");
+  const rooms = info.rooms || [];
+  if (!currentRoomID) {
+    currentRoomID = info.default_room_id || (rooms[0] && rooms[0].id) || "public";
+  }
+  if (rooms.length > 0 && !rooms.some((room) => room.id === currentRoomID)) {
+    location.href = `/rooms/${encodeURIComponent(rooms[0].id)}`;
+    return false;
+  }
+  roomSelect.replaceChildren(...rooms.map((room) => {
+    const option = document.createElement("option");
+    option.value = room.id;
+    option.textContent = room.name || room.id;
+    return option;
+  }));
+  roomSelect.value = currentRoomID;
+  roomSelect.disabled = rooms.length <= 1;
+  return true;
+}
+
 async function runSearch() {
   const q = searchInput.value.trim();
   const tracks = await api(`/api/search?q=${encodeURIComponent(q)}`);
@@ -463,16 +520,16 @@ searchInput.addEventListener("input", () => {
 
 for (const [id, path] of [["previous", "/api/playback/previous"], ["skip", "/api/playback/skip"]]) {
   document.getElementById(id).addEventListener("click", async () => {
-    await postState(path);
+    await postState(roomAPI(path));
   });
 }
 
 togglePlaybackButton.addEventListener("click", async () => {
   if (lastState && lastState.current && !lastState.paused) {
-    await postState("/api/playback/pause");
+    await postState(roomAPI("/api/playback/pause"));
     return;
   }
-  await postState("/api/playback/play");
+  await postState(roomAPI("/api/playback/play"));
 });
 
 seekInput.addEventListener("input", () => {
@@ -488,7 +545,7 @@ seekInput.addEventListener("change", async () => {
   }
   const positionMS = Math.max(0, Math.round(Number(seekInput.value) * 1000));
   seeking = false;
-  await postState("/api/playback/seek", {position_ms: positionMS});
+  await postState(roomAPI("/api/playback/seek"), {position_ms: positionMS});
 });
 
 volumeInput.addEventListener("input", () => {
@@ -547,18 +604,47 @@ renderPlaybackButton(false);
 loadLocalVolume();
 
 clearQueueButton.addEventListener("click", async () => {
-  await postState("/api/queue/clear");
+  await postState(roomAPI("/api/queue/clear"));
 });
 
 clearHistoryButton.addEventListener("click", async () => {
-  await postState("/api/history/clear");
+  await postState(roomAPI("/api/history/clear"));
 });
 
-new EventSource("/events").addEventListener("state", (event) => {
-  renderState(JSON.parse(event.data));
+roomSelect.addEventListener("change", () => {
+  if (!roomSelect.value || roomSelect.value === currentRoomID) {
+    return;
+  }
+  closeEvents();
+  roomSelect.disabled = true;
+  location.href = `/rooms/${encodeURIComponent(roomSelect.value)}`;
 });
 
-loadLibraryStatus();
-loadCurrentUser();
-runSearch().catch(console.error);
-api("/api/state").then(renderState).catch(console.error);
+logoutForm.addEventListener("submit", () => {
+  closeEvents();
+});
+
+window.addEventListener("pagehide", closeEvents);
+window.addEventListener("beforeunload", closeEvents);
+
+async function start() {
+  if (!await loadRooms()) {
+    return;
+  }
+  closeEvents();
+  events = new EventSource(`/rooms/${encodeURIComponent(currentRoomID)}/events`);
+  events.addEventListener("state", (event) => {
+    renderState(JSON.parse(event.data));
+  });
+  events.addEventListener("error", () => {
+    if (document.visibilityState === "hidden") {
+      closeEvents();
+    }
+  });
+  loadLibraryStatus();
+  loadCurrentUser();
+  runSearch().catch(console.error);
+  api(roomAPI("/api/state")).then(renderState).catch(console.error);
+}
+
+start().catch(console.error);

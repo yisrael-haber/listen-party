@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
+	pbauth "github.com/pocketbase/pocketbase/tools/auth"
 )
 
 func TestOpenBootstrapsAdminAndAuthAdminRedirect(t *testing.T) {
@@ -283,6 +284,27 @@ func TestBearerToken(t *testing.T) {
 	}
 	if got := bearerToken("abc"); got != "abc" {
 		t.Fatalf("bearerToken(raw) = %q, want abc", got)
+	}
+}
+
+func TestOAuthGroupsReadsKeycloakGroupsClaim(t *testing.T) {
+	groups, ok := oauthGroups(&pbauth.AuthUser{RawUser: map[string]any{
+		"groups": []any{"/math", "staff", "/math"},
+	}})
+	if !ok {
+		t.Fatal("groups claim was not detected")
+	}
+	if strings.Join(groups, ",") != "math,staff" {
+		t.Fatalf("groups = %v, want [math staff]", groups)
+	}
+}
+
+func TestOAuthGroupsLeavesMissingClaimAlone(t *testing.T) {
+	groups, ok := oauthGroups(&pbauth.AuthUser{RawUser: map[string]any{
+		"preferred_username": "alice",
+	}})
+	if ok {
+		t.Fatalf("groups claim detected unexpectedly: %v", groups)
 	}
 }
 

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Listen Party Admin</title>
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body class="admin-page">
   <main>
@@ -45,22 +45,41 @@
         </label>
         <div class="config-grid">
           <label>
-            <span>Listener username</span>
-            <input id="configListenerUser" autocomplete="username">
+            <span>PocketBase data directory</span>
+            <input id="configAuthDataDir" autocomplete="off">
           </label>
           <label>
-            <span>Listener password</span>
-            <input id="configListenerPass" type="password" autocomplete="new-password">
+            <span>Bootstrap admin email</span>
+            <input id="configBootstrapEmail" autocomplete="off">
           </label>
           <label>
-            <span>Admin username</span>
-            <input id="configAdminUser" autocomplete="username">
+            <span>Keycloak issuer URL</span>
+            <input id="configKeycloakIssuer" autocomplete="off">
           </label>
           <label>
-            <span>Admin password</span>
-            <input id="configAdminPass" type="password" autocomplete="new-password">
+            <span>Keycloak client ID</span>
+            <input id="configKeycloakClientID" autocomplete="off">
+          </label>
+          <label>
+            <span>Keycloak client secret</span>
+            <input id="configKeycloakClientSecret" type="password" autocomplete="off">
+          </label>
+          <label>
+            <span>Keycloak display name</span>
+            <input id="configKeycloakDisplayName" autocomplete="off">
           </label>
         </div>
+        <label class="checkbox-label">
+          <input id="configKeycloakEnabled" type="checkbox">
+          <span>Enable Keycloak</span>
+        </label>
+        <section class="rooms-editor">
+          <div class="section-head">
+            <h2>Rooms</h2>
+            <button id="addRoom" class="secondary compact" type="button">Add Room</button>
+          </div>
+          <div id="roomsList" class="rooms-list"></div>
+        </section>
         <div class="form-actions">
           <button type="submit">Save</button>
         </div>

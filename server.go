@@ -20,10 +20,9 @@ type ServerOptions struct {
 	Auth       AuthGate
 	AuthRoutes http.Handler
 	Library    *musiclib.Library
-	Player     *Playback
+	Rooms      *RoomManager
 	Config     Config
 	ConfigPath string
-	RoomID     string
 	Logger     *slog.Logger
 }
 
@@ -31,11 +30,10 @@ type Server struct {
 	auth       AuthGate
 	authRoutes http.Handler
 	library    *musiclib.Library
-	player     *Playback
+	rooms      *RoomManager
 	configMu   sync.RWMutex
 	config     Config
 	configPath string
-	roomID     string
 	logger     *slog.Logger
 }
 
@@ -43,14 +41,20 @@ func NewServer(opts ServerOptions) *Server {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	if opts.Rooms == nil {
+		if len(opts.Config.Rooms) > 0 {
+			opts.Rooms = NewRoomManager(opts.Config.Rooms)
+		} else {
+			opts.Rooms = NewRoomManager([]RoomConfig{{ID: defaultRoomID, Name: "Public Room", Public: true}})
+		}
+	}
 	return &Server{
 		auth:       opts.Auth,
 		authRoutes: opts.AuthRoutes,
 		library:    opts.Library,
-		player:     opts.Player,
+		rooms:      opts.Rooms,
 		config:     opts.Config,
 		configPath: opts.ConfigPath,
-		roomID:     opts.RoomID,
 		logger:     opts.Logger,
 	}
 }
@@ -63,26 +67,44 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /admin.js", requireAdmin(http.HandlerFunc(s.handleAdminJS)))
 	requireListener := s.auth.Require(RoleListener, RoleAdmin)
 	webFiles := http.FileServer(http.FS(webRoot()))
-	mux.Handle("GET /{$}", requireListener(webFiles))
+	mux.Handle("GET /{$}", requireListener(http.HandlerFunc(s.handleDefaultRoom)))
+	mux.Handle("GET /rooms/{room}", requireListener(http.HandlerFunc(s.handleRoomPage)))
+	mux.Handle("GET /rooms/{room}/", requireListener(http.HandlerFunc(s.handleRoomPage)))
 	mux.Handle("GET /assets/", requireListener(http.StripPrefix("/assets/", webFiles)))
-	mux.Handle("GET /events", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleEvents)))
+	mux.Handle("GET /events", requireListener(http.HandlerFunc(s.handleEvents)))
+	mux.Handle("GET /rooms/{room}/events", requireListener(http.HandlerFunc(s.handleEvents)))
 	mux.Handle("GET /api/me", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleMe)))
-	mux.Handle("GET /api/state", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleState)))
+	mux.Handle("GET /api/rooms", requireListener(http.HandlerFunc(s.handleRooms)))
+	mux.Handle("GET /api/state", requireListener(http.HandlerFunc(s.handleState)))
+	mux.Handle("GET /rooms/{room}/api/state", requireListener(http.HandlerFunc(s.handleState)))
 	mux.Handle("GET /api/search", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleSearch)))
 	mux.Handle("GET /api/library", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleLibrary)))
-	mux.Handle("POST /api/queue", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleQueue)))
-	mux.Handle("POST /api/queue/move", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleQueueMove)))
-	mux.Handle("POST /api/queue/next", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleQueueNext)))
-	mux.Handle("POST /api/history/clear", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleHistoryClear)))
-	mux.Handle("POST /api/playback/play", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handlePlay)))
-	mux.Handle("POST /api/playback/play-now", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handlePlayNow)))
-	mux.Handle("POST /api/playback/pause", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handlePause)))
-	mux.Handle("POST /api/playback/seek", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleSeek)))
-	mux.Handle("POST /api/playback/ended", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleEnded)))
-	mux.Handle("POST /api/playback/previous", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handlePrevious)))
-	mux.Handle("POST /api/playback/skip", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleSkip)))
-	mux.Handle("POST /api/queue/remove", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleQueueRemove)))
-	mux.Handle("POST /api/queue/clear", s.auth.Require(RoleListener, RoleAdmin)(http.HandlerFunc(s.handleQueueClear)))
+	mux.Handle("POST /api/queue", requireListener(http.HandlerFunc(s.handleQueue)))
+	mux.Handle("POST /rooms/{room}/api/queue", requireListener(http.HandlerFunc(s.handleQueue)))
+	mux.Handle("POST /api/queue/move", requireListener(http.HandlerFunc(s.handleQueueMove)))
+	mux.Handle("POST /rooms/{room}/api/queue/move", requireListener(http.HandlerFunc(s.handleQueueMove)))
+	mux.Handle("POST /api/queue/next", requireListener(http.HandlerFunc(s.handleQueueNext)))
+	mux.Handle("POST /rooms/{room}/api/queue/next", requireListener(http.HandlerFunc(s.handleQueueNext)))
+	mux.Handle("POST /api/history/clear", requireListener(http.HandlerFunc(s.handleHistoryClear)))
+	mux.Handle("POST /rooms/{room}/api/history/clear", requireListener(http.HandlerFunc(s.handleHistoryClear)))
+	mux.Handle("POST /api/playback/play", requireListener(http.HandlerFunc(s.handlePlay)))
+	mux.Handle("POST /rooms/{room}/api/playback/play", requireListener(http.HandlerFunc(s.handlePlay)))
+	mux.Handle("POST /api/playback/play-now", requireListener(http.HandlerFunc(s.handlePlayNow)))
+	mux.Handle("POST /rooms/{room}/api/playback/play-now", requireListener(http.HandlerFunc(s.handlePlayNow)))
+	mux.Handle("POST /api/playback/pause", requireListener(http.HandlerFunc(s.handlePause)))
+	mux.Handle("POST /rooms/{room}/api/playback/pause", requireListener(http.HandlerFunc(s.handlePause)))
+	mux.Handle("POST /api/playback/seek", requireListener(http.HandlerFunc(s.handleSeek)))
+	mux.Handle("POST /rooms/{room}/api/playback/seek", requireListener(http.HandlerFunc(s.handleSeek)))
+	mux.Handle("POST /api/playback/ended", requireListener(http.HandlerFunc(s.handleEnded)))
+	mux.Handle("POST /rooms/{room}/api/playback/ended", requireListener(http.HandlerFunc(s.handleEnded)))
+	mux.Handle("POST /api/playback/previous", requireListener(http.HandlerFunc(s.handlePrevious)))
+	mux.Handle("POST /rooms/{room}/api/playback/previous", requireListener(http.HandlerFunc(s.handlePrevious)))
+	mux.Handle("POST /api/playback/skip", requireListener(http.HandlerFunc(s.handleSkip)))
+	mux.Handle("POST /rooms/{room}/api/playback/skip", requireListener(http.HandlerFunc(s.handleSkip)))
+	mux.Handle("POST /api/queue/remove", requireListener(http.HandlerFunc(s.handleQueueRemove)))
+	mux.Handle("POST /rooms/{room}/api/queue/remove", requireListener(http.HandlerFunc(s.handleQueueRemove)))
+	mux.Handle("POST /api/queue/clear", requireListener(http.HandlerFunc(s.handleQueueClear)))
+	mux.Handle("POST /rooms/{room}/api/queue/clear", requireListener(http.HandlerFunc(s.handleQueueClear)))
 	mux.Handle("POST /api/admin/play", requireAdmin(http.HandlerFunc(s.handlePlay)))
 	mux.Handle("POST /api/admin/pause", requireAdmin(http.HandlerFunc(s.handlePause)))
 	mux.Handle("POST /api/admin/skip", requireAdmin(http.HandlerFunc(s.handleSkip)))
@@ -130,6 +152,58 @@ func isAuthRoute(path string) bool {
 	return false
 }
 
+func (s *Server) handleDefaultRoom(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, webRoot(), "index.html")
+}
+
+func (s *Server) handleRoomPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.roomFromRequest(w, r); !ok {
+		return
+	}
+	http.ServeFileFS(w, r, webRoot(), "index.html")
+}
+
+func (s *Server) handleRooms(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.auth.CurrentUser(r)
+	if !ok {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	rooms := s.rooms.List()
+	visible := make([]Room, 0, len(rooms))
+	for _, room := range rooms {
+		if UserCanAccessRoom(user, room) {
+			visible = append(visible, room)
+		}
+	}
+	writeJSON(w, map[string]any{
+		"default_room_id": s.rooms.DefaultID(),
+		"rooms":           visible,
+	})
+}
+
+func (s *Server) roomFromRequest(w http.ResponseWriter, r *http.Request) (*Room, bool) {
+	roomID := r.PathValue("room")
+	if roomID == "" {
+		roomID = s.rooms.DefaultID()
+	}
+	room, ok := s.rooms.Get(roomID)
+	if !ok {
+		http.Error(w, "room not found", http.StatusNotFound)
+		return nil, false
+	}
+	user, ok := s.auth.CurrentUser(r)
+	if !ok {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return nil, false
+	}
+	if !UserCanAccessRoom(user, *room) {
+		http.Error(w, "room access denied", http.StatusForbidden)
+		return nil, false
+	}
+	return room, true
+}
+
 func (s *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, adminRoot(), "admin.html")
 }
@@ -148,6 +222,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
 	user, ok := s.auth.CurrentUser(r)
 	if !ok {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
@@ -157,25 +235,32 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	ch, cancel := s.player.Subscribe(s.roomID, ActiveListener{UserID: user.ID, Username: user.Username})
-	s.logger.Info("listener connected", "remote", r.RemoteAddr, "username", user.Username, "listener_count", s.player.Snapshot(s.roomID).ListenerCount)
+	ch, cancel := room.Playback.Subscribe(ActiveListener{UserID: user.ID, Username: user.Username})
+	s.logger.Info("listener connected", "remote", r.RemoteAddr, "username", user.Username, "room", room.ID, "listener_count", room.Playback.Snapshot().ListenerCount)
 	defer func() {
 		cancel()
-		s.logger.Info("listener disconnected", "remote", r.RemoteAddr, "username", user.Username, "listener_count", s.player.Snapshot(s.roomID).ListenerCount)
+		s.logger.Info("listener disconnected", "remote", r.RemoteAddr, "username", user.Username, "room", room.ID, "listener_count", room.Playback.Snapshot().ListenerCount)
 	}()
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-r.Context().Done():
+			s.logger.Info("listener request closed", "remote", r.RemoteAddr, "username", user.Username, "room", room.ID, "error", r.Context().Err())
 			return
-		case state := <-ch:
+		case state, ok := <-ch:
+			if !ok {
+				s.logger.Info("listener subscription closed", "remote", r.RemoteAddr, "username", user.Username, "room", room.ID)
+				return
+			}
 			if !s.writeEvent(w, r, state) {
+				s.logger.Info("listener sse write closed", "remote", r.RemoteAddr, "username", user.Username, "room", room.ID)
 				return
 			}
 		case <-ticker.C:
-			if !s.writeEvent(w, r, s.player.Snapshot(s.roomID)) {
+			if !s.writeEvent(w, r, s.roomSnapshot(r.Context(), room)) {
+				s.logger.Info("listener heartbeat write closed", "remote", r.RemoteAddr, "username", user.Username, "room", room.ID)
 				return
 			}
 		}
@@ -187,6 +272,9 @@ func (s *Server) writeEvent(w http.ResponseWriter, r *http.Request, state Playba
 	if err != nil {
 		s.logger.Warn("build sse state", "error", err)
 		return true
+	}
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		s.logger.Debug("set sse write deadline", "error", err)
 	}
 	fmt.Fprintf(w, "event: state\ndata: ")
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
@@ -201,12 +289,36 @@ func (s *Server) writeEvent(w http.ResponseWriter, r *http.Request, state Playba
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	state, err := s.viewState(r.Context(), s.player.Snapshot(s.roomID))
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
+	state, err := s.viewState(r.Context(), s.roomSnapshot(r.Context(), room))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, state)
+}
+
+func (s *Server) roomSnapshot(ctx context.Context, room *Room) PlaybackState {
+	state := room.Playback.Snapshot()
+	if !s.playbackExpired(ctx, state) {
+		return state
+	}
+	s.logger.Info("auto advancing expired playback", "room", room.ID, "track_id", state.CurrentTrackID, "playback_id", state.PlaybackID)
+	return room.Playback.Ended(state.CurrentTrackID)
+}
+
+func (s *Server) playbackExpired(ctx context.Context, state PlaybackState) bool {
+	if s.library == nil || state.CurrentTrackID == 0 || state.Paused || state.StartedAt.IsZero() {
+		return false
+	}
+	track, err := s.library.Get(ctx, state.CurrentTrackID)
+	if err != nil || track.DurationMS <= 0 {
+		return false
+	}
+	return time.Since(state.StartedAt).Milliseconds() > track.DurationMS+1500
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -270,6 +382,7 @@ func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.library.UpdateScanConfig(cfg.MusicDirs, cfg.ScanWorkers)
+	s.rooms.Update(cfg.Rooms)
 
 	s.configMu.Lock()
 	s.config = cfg
@@ -292,23 +405,35 @@ func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
 	track, ok := s.readTrack(w, r)
 	if !ok {
 		return
 	}
-	s.writeCommandState(w, r, "queue_add", s.player.Add(s.roomID, track.ID, s.actorUsername(r)), logTrack(track)...)
+	s.writeCommandState(w, r, "queue_add", room.Playback.Add(track.ID, s.actorUsername(r)), append([]any{"room", room.ID}, logTrack(track)...)...)
 }
 
 func (s *Server) handleQueueRemove(w http.ResponseWriter, r *http.Request) {
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
 	id, ok := readID(w, r)
 	if !ok {
 		return
 	}
-	logFields := s.logQueueItemTrack(r, id)
-	s.writeCommandState(w, r, "queue_remove", s.player.Remove(s.roomID, id), logFields...)
+	logFields := append([]any{"room", room.ID}, s.logQueueItemTrack(r, room, id)...)
+	s.writeCommandState(w, r, "queue_remove", room.Playback.Remove(id), logFields...)
 }
 
 func (s *Server) handleQueueMove(w http.ResponseWriter, r *http.Request) {
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		ID        int64 `json:"id"`
 		Direction int   `json:"direction"`
@@ -321,50 +446,70 @@ func (s *Server) handleQueueMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Direction < 0 {
-		s.writeCommandState(w, r, "queue_move_up", s.player.Move(s.roomID, req.ID, -1), s.logQueueItemTrack(r, req.ID)...)
+		s.writeCommandState(w, r, "queue_move_up", room.Playback.Move(req.ID, -1), append([]any{"room", room.ID}, s.logQueueItemTrack(r, room, req.ID)...)...)
 		return
 	}
 	if req.Direction > 0 {
-		s.writeCommandState(w, r, "queue_move_down", s.player.Move(s.roomID, req.ID, 1), s.logQueueItemTrack(r, req.ID)...)
+		s.writeCommandState(w, r, "queue_move_down", room.Playback.Move(req.ID, 1), append([]any{"room", room.ID}, s.logQueueItemTrack(r, room, req.ID)...)...)
 		return
 	}
-	s.writeViewState(w, r, s.player.Snapshot(s.roomID))
+	s.writeViewState(w, r, room.Playback.Snapshot())
 }
 
 func (s *Server) handleQueueNext(w http.ResponseWriter, r *http.Request) {
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
 	id, ok := readID(w, r)
 	if !ok {
 		return
 	}
-	s.writeCommandState(w, r, "queue_next", s.player.MoveToNext(s.roomID, id), s.logQueueItemTrack(r, id)...)
+	s.writeCommandState(w, r, "queue_next", room.Playback.MoveToNext(id), append([]any{"room", room.ID}, s.logQueueItemTrack(r, room, id)...)...)
 }
 
 func (s *Server) handleQueueClear(w http.ResponseWriter, r *http.Request) {
-	queueLen := len(s.player.Snapshot(s.roomID).Queue)
-	s.writeCommandState(w, r, "queue_clear", s.player.Clear(s.roomID), "queue_count", queueLen)
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
+	queueLen := len(room.Playback.Snapshot().Queue)
+	s.writeCommandState(w, r, "queue_clear", room.Playback.Clear(), "room", room.ID, "queue_count", queueLen)
 }
 
 func (s *Server) handleHistoryClear(w http.ResponseWriter, r *http.Request) {
-	historyLen := len(s.player.Snapshot(s.roomID).History)
-	s.writeCommandState(w, r, "history_clear", s.player.ClearHistory(s.roomID), "history_count", historyLen)
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
+	historyLen := len(room.Playback.Snapshot().History)
+	s.writeCommandState(w, r, "history_clear", room.Playback.ClearHistory(), "room", room.ID, "history_count", historyLen)
 }
 
 func (s *Server) handlePlay(w http.ResponseWriter, r *http.Request) {
-	state, err := s.player.Play(s.roomID)
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
+	state, err := room.Playback.Play()
 	if err != nil {
-		s.logger.Warn("play rejected", "remote", r.RemoteAddr, "error", err)
+		s.logger.Warn("play rejected", "remote", r.RemoteAddr, "room", room.ID, "error", err)
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	s.writeCommandState(w, r, "play", state)
+	s.writeCommandState(w, r, "play", state, "room", room.ID)
 }
 
 func (s *Server) handlePlayNow(w http.ResponseWriter, r *http.Request) {
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
 	track, ok := s.readTrack(w, r)
 	if !ok {
 		return
 	}
-	s.writeCommandState(w, r, "play_now", s.player.PlayNow(s.roomID, track.ID, s.actorUsername(r)), logTrack(track)...)
+	s.writeCommandState(w, r, "play_now", room.Playback.PlayNow(track.ID, s.actorUsername(r)), append([]any{"room", room.ID}, logTrack(track)...)...)
 }
 
 func (s *Server) actorUsername(r *http.Request) string {
@@ -401,33 +546,53 @@ func (s *Server) readTrack(w http.ResponseWriter, r *http.Request) (musiclib.Tra
 }
 
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
-	s.writeCommandState(w, r, "pause", s.player.Pause(s.roomID))
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
+	s.writeCommandState(w, r, "pause", room.Playback.Pause(), "room", room.ID)
 }
 
 func (s *Server) handlePrevious(w http.ResponseWriter, r *http.Request) {
-	s.writeCommandState(w, r, "previous", s.player.Previous(s.roomID))
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
+	s.writeCommandState(w, r, "previous", room.Playback.Previous(), "room", room.ID)
 }
 
 func (s *Server) handleSeek(w http.ResponseWriter, r *http.Request) {
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		PositionMS int64 `json:"position_ms"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	s.writeCommandState(w, r, "seek", s.player.Seek(s.roomID, req.PositionMS))
+	s.writeCommandState(w, r, "seek", room.Playback.Seek(req.PositionMS), "room", room.ID)
 }
 
 func (s *Server) handleSkip(w http.ResponseWriter, r *http.Request) {
-	s.writeCommandState(w, r, "skip", s.player.Skip(s.roomID))
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
+	s.writeCommandState(w, r, "skip", room.Playback.Skip(), "room", room.ID)
 }
 
 func (s *Server) handleEnded(w http.ResponseWriter, r *http.Request) {
+	room, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
 	track, ok := s.readTrack(w, r)
 	if !ok {
 		return
 	}
-	s.writeCommandState(w, r, "track_ended", s.player.Ended(s.roomID, track.ID), logTrack(track)...)
+	s.writeCommandState(w, r, "track_ended", room.Playback.Ended(track.ID), append([]any{"room", room.ID}, logTrack(track)...)...)
 }
 
 func (s *Server) handleRescan(w http.ResponseWriter, r *http.Request) {
@@ -508,8 +673,8 @@ func (s *Server) logPlayback(event string, r *http.Request, view ViewState, args
 	s.logger.Info("playback action", fields...)
 }
 
-func (s *Server) logQueueItemTrack(r *http.Request, queueItemID int64) []any {
-	for _, item := range s.player.Snapshot(s.roomID).Queue {
+func (s *Server) logQueueItemTrack(r *http.Request, room *Room, queueItemID int64) []any {
+	for _, item := range room.Playback.Snapshot().Queue {
 		if item.ID != queueItemID {
 			continue
 		}

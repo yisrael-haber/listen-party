@@ -72,6 +72,65 @@ func TestMeReturnsCurrentUser(t *testing.T) {
 	}
 }
 
+func TestRoomsEndpointFiltersByUserAccess(t *testing.T) {
+	server := NewServer(ServerOptions{
+		Auth: fakeAuth{
+			roles: []Role{RoleListener},
+			user: UserInfo{
+				ID:       "user1",
+				Username: "alice",
+				Role:     RoleListener,
+				Groups:   []string{"staff"},
+			},
+		},
+		Config: Config{Rooms: []RoomConfig{
+			{ID: "public", Name: "Public Room", Public: true},
+			{ID: "staff", Name: "Staff", AllowedGroups: []string{"staff"}},
+			{ID: "private", Name: "Private"},
+		}},
+	}).Handler()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/rooms", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/api/rooms status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`"id":"public"`, `"id":"staff"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("/api/rooms body = %s, missing %s", body, want)
+		}
+	}
+	if strings.Contains(body, `"id":"private"`) {
+		t.Fatalf("/api/rooms body leaked private room: %s", body)
+	}
+}
+
+func TestPrivateRoomPageRequiresRoomAccess(t *testing.T) {
+	server := NewServer(ServerOptions{
+		Auth: fakeAuth{
+			roles: []Role{RoleListener},
+			user: UserInfo{
+				ID:       "user1",
+				Username: "alice",
+				Role:     RoleListener,
+			},
+		},
+		Config: Config{Rooms: []RoomConfig{
+			{ID: "public", Name: "Public Room", Public: true},
+			{ID: "private", Name: "Private"},
+		}},
+	}).Handler()
+
+	req := httptest.NewRequest(http.MethodGet, "/rooms/private", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("/rooms/private status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
 type fakeAuth struct {
 	roles []Role
 	user  UserInfo

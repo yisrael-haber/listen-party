@@ -4,7 +4,7 @@ import "testing"
 
 func TestQueueWaitsForPlayAndSkipAdvances(t *testing.T) {
 	p := NewPlayback("default")
-	state := p.Add("default", 10, "alice")
+	state := p.Add(10, "alice")
 	if state.CurrentTrackID != 0 {
 		t.Fatalf("current = %d, want nothing playing", state.CurrentTrackID)
 	}
@@ -14,7 +14,7 @@ func TestQueueWaitsForPlayAndSkipAdvances(t *testing.T) {
 	if state.Queue[0].RequestedBy != "alice" {
 		t.Fatalf("queued by = %q, want alice", state.Queue[0].RequestedBy)
 	}
-	state, err := p.Play("default")
+	state, err := p.Play()
 	if err != nil {
 		t.Fatalf("play: %v", err)
 	}
@@ -24,11 +24,11 @@ func TestQueueWaitsForPlayAndSkipAdvances(t *testing.T) {
 	if state.CurrentRequestedBy != "alice" {
 		t.Fatalf("current requested by = %q, want alice", state.CurrentRequestedBy)
 	}
-	state = p.Add("default", 20, "alice")
+	state = p.Add(20, "alice")
 	if len(state.Queue) != 1 {
 		t.Fatalf("queue length = %d, want 1", len(state.Queue))
 	}
-	state = p.Skip("default")
+	state = p.Skip()
 	if state.CurrentTrackID != 20 {
 		t.Fatalf("current after skip = %d, want 20", state.CurrentTrackID)
 	}
@@ -36,12 +36,12 @@ func TestQueueWaitsForPlayAndSkipAdvances(t *testing.T) {
 
 func TestSeekUpdatesSharedPosition(t *testing.T) {
 	p := NewPlayback("default")
-	p.Add("default", 10, "alice")
-	if _, err := p.Play("default"); err != nil {
+	p.Add(10, "alice")
+	if _, err := p.Play(); err != nil {
 		t.Fatalf("play: %v", err)
 	}
 
-	state := p.Seek("default", 30_000)
+	state := p.Seek(30_000)
 	if state.CurrentTrackID != 10 {
 		t.Fatalf("current = %d, want 10", state.CurrentTrackID)
 	}
@@ -49,8 +49,8 @@ func TestSeekUpdatesSharedPosition(t *testing.T) {
 		t.Fatal("started_at should be set")
 	}
 
-	state = p.Pause("default")
-	state = p.Seek("default", 12_000)
+	state = p.Pause()
+	state = p.Seek(12_000)
 	if state.PositionAtPauseMS != 12_000 {
 		t.Fatalf("pause position = %d, want 12000", state.PositionAtPauseMS)
 	}
@@ -58,23 +58,23 @@ func TestSeekUpdatesSharedPosition(t *testing.T) {
 
 func TestQueueRemoveAndClear(t *testing.T) {
 	p := NewPlayback("default")
-	p.Add("default", 10, "alice")
-	if _, err := p.Play("default"); err != nil {
+	p.Add(10, "alice")
+	if _, err := p.Play(); err != nil {
 		t.Fatalf("play: %v", err)
 	}
-	state := p.Add("default", 20, "alice")
+	state := p.Add(20, "alice")
 	if len(state.Queue) != 1 {
 		t.Fatalf("queue length = %d, want 1", len(state.Queue))
 	}
 
-	state = p.Remove("default", state.Queue[0].ID)
+	state = p.Remove(state.Queue[0].ID)
 	if len(state.Queue) != 0 {
 		t.Fatalf("queue length after remove = %d, want 0", len(state.Queue))
 	}
 
-	p.Add("default", 30, "alice")
-	p.Add("default", 40, "alice")
-	state = p.Clear("default")
+	p.Add(30, "alice")
+	p.Add(40, "alice")
+	state = p.Clear()
 	if len(state.Queue) != 0 {
 		t.Fatalf("queue length after clear = %d, want 0", len(state.Queue))
 	}
@@ -85,18 +85,18 @@ func TestQueueRemoveAndClear(t *testing.T) {
 
 func TestEndedOnlyAdvancesMatchingCurrentTrack(t *testing.T) {
 	p := NewPlayback("default")
-	p.Add("default", 10, "alice")
-	if _, err := p.Play("default"); err != nil {
+	p.Add(10, "alice")
+	if _, err := p.Play(); err != nil {
 		t.Fatalf("play: %v", err)
 	}
-	p.Add("default", 20, "alice")
-	p.Add("default", 30, "alice")
+	p.Add(20, "alice")
+	p.Add(30, "alice")
 
-	state := p.Ended("default", 10)
+	state := p.Ended(10)
 	if state.CurrentTrackID != 20 {
 		t.Fatalf("current after ended = %d, want 20", state.CurrentTrackID)
 	}
-	state = p.Ended("default", 10)
+	state = p.Ended(10)
 	if state.CurrentTrackID != 20 {
 		t.Fatalf("stale ended advanced current to %d, want 20", state.CurrentTrackID)
 	}
@@ -104,12 +104,12 @@ func TestEndedOnlyAdvancesMatchingCurrentTrack(t *testing.T) {
 
 func TestPreviousPlaysNewestHistoryAndReturnsCurrentToQueue(t *testing.T) {
 	p := NewPlayback("default")
-	p.Add("default", 10, "alice")
-	if _, err := p.Play("default"); err != nil {
+	p.Add(10, "alice")
+	if _, err := p.Play(); err != nil {
 		t.Fatalf("play: %v", err)
 	}
-	p.Add("default", 20, "alice")
-	state := p.Skip("default")
+	p.Add(20, "alice")
+	state := p.Skip()
 	if state.CurrentTrackID != 20 {
 		t.Fatalf("current after skip = %d, want 20", state.CurrentTrackID)
 	}
@@ -120,7 +120,7 @@ func TestPreviousPlaysNewestHistoryAndReturnsCurrentToQueue(t *testing.T) {
 		t.Fatalf("requesters after skip: current=%q history=%q, want alice/alice", state.CurrentRequestedBy, state.History[0].RequestedBy)
 	}
 
-	state = p.Previous("default")
+	state = p.Previous()
 	if state.CurrentTrackID != 10 {
 		t.Fatalf("current after previous = %d, want 10", state.CurrentTrackID)
 	}
@@ -137,13 +137,13 @@ func TestPreviousPlaysNewestHistoryAndReturnsCurrentToQueue(t *testing.T) {
 
 func TestPlaybackIDChangesForEachStartedTrack(t *testing.T) {
 	p := NewPlayback("default")
-	p.Add("default", 10, "alice")
-	first, err := p.Play("default")
+	p.Add(10, "alice")
+	first, err := p.Play()
 	if err != nil {
 		t.Fatalf("play: %v", err)
 	}
-	p.Add("default", 10, "alice")
-	second := p.Skip("default")
+	p.Add(10, "alice")
+	second := p.Skip()
 
 	if first.PlaybackID == 0 {
 		t.Fatal("first playback id should be set")
@@ -158,15 +158,15 @@ func TestPlaybackIDChangesForEachStartedTrack(t *testing.T) {
 
 func TestQueueMoveAndMoveToNext(t *testing.T) {
 	p := NewPlayback("default")
-	p.Add("default", 10, "alice")
-	p.Add("default", 20, "alice")
-	state := p.Add("default", 30, "alice")
+	p.Add(10, "alice")
+	p.Add(20, "alice")
+	state := p.Add(30, "alice")
 
-	state = p.Move("default", state.Queue[2].ID, -1)
+	state = p.Move(state.Queue[2].ID, -1)
 	if got := state.Queue[1].TrackID; got != 30 {
 		t.Fatalf("moved queue item = %d, want 30", got)
 	}
-	state = p.MoveToNext("default", state.Queue[1].ID)
+	state = p.MoveToNext(state.Queue[1].ID)
 	if got := state.Queue[0].TrackID; got != 30 {
 		t.Fatalf("next queue item = %d, want 30", got)
 	}
@@ -174,13 +174,13 @@ func TestQueueMoveAndMoveToNext(t *testing.T) {
 
 func TestPlayNowStartsTrackAndRecordsHistory(t *testing.T) {
 	p := NewPlayback("default")
-	p.Add("default", 10, "alice")
-	if _, err := p.Play("default"); err != nil {
+	p.Add(10, "alice")
+	if _, err := p.Play(); err != nil {
 		t.Fatalf("play: %v", err)
 	}
-	p.Add("default", 20, "alice")
+	p.Add(20, "alice")
 
-	state := p.PlayNow("default", 20, "bob")
+	state := p.PlayNow(20, "bob")
 	if state.CurrentTrackID != 20 {
 		t.Fatalf("current = %d, want 20", state.CurrentTrackID)
 	}
@@ -200,16 +200,16 @@ func TestPlayNowStartsTrackAndRecordsHistory(t *testing.T) {
 
 func TestClearHistory(t *testing.T) {
 	p := NewPlayback("default")
-	p.Add("default", 10, "alice")
-	if _, err := p.Play("default"); err != nil {
+	p.Add(10, "alice")
+	if _, err := p.Play(); err != nil {
 		t.Fatalf("play: %v", err)
 	}
-	state := p.PlayNow("default", 20, "bob")
+	state := p.PlayNow(20, "bob")
 	if len(state.History) != 1 {
 		t.Fatalf("history length = %d, want 1", len(state.History))
 	}
 
-	state = p.ClearHistory("default")
+	state = p.ClearHistory()
 	if len(state.History) != 0 {
 		t.Fatalf("history length after clear = %d, want 0", len(state.History))
 	}
@@ -220,7 +220,7 @@ func TestClearHistory(t *testing.T) {
 
 func TestSubscribeUpdatesListenerCount(t *testing.T) {
 	p := NewPlayback("default")
-	ch, cancel := p.Subscribe("default", ActiveListener{UserID: "user1", Username: "alice"})
+	ch, cancel := p.Subscribe(ActiveListener{UserID: "user1", Username: "alice"})
 	state := <-ch
 	if state.ListenerCount != 1 {
 		t.Fatalf("listener count = %d, want 1", state.ListenerCount)
@@ -229,7 +229,7 @@ func TestSubscribeUpdatesListenerCount(t *testing.T) {
 		t.Fatalf("listeners = %v, want [alice]", state.Listeners)
 	}
 	cancel()
-	state = p.Snapshot("default")
+	state = p.Snapshot()
 	if state.ListenerCount != 0 {
 		t.Fatalf("listener count after cancel = %d, want 0", state.ListenerCount)
 	}
@@ -237,18 +237,35 @@ func TestSubscribeUpdatesListenerCount(t *testing.T) {
 
 func TestSubscribeCountsDistinctListenerUsers(t *testing.T) {
 	p := NewPlayback("default")
-	_, cancelA := p.Subscribe("default", ActiveListener{UserID: "user1", Username: "alice"})
+	_, cancelA := p.Subscribe(ActiveListener{UserID: "user1", Username: "alice"})
 	defer cancelA()
-	_, cancelB := p.Subscribe("default", ActiveListener{UserID: "user1", Username: "alice"})
+	_, cancelB := p.Subscribe(ActiveListener{UserID: "user1", Username: "alice"})
 	defer cancelB()
-	_, cancelC := p.Subscribe("default", ActiveListener{UserID: "user2", Username: "bob"})
+	_, cancelC := p.Subscribe(ActiveListener{UserID: "user2", Username: "bob"})
 	defer cancelC()
 
-	state := p.Snapshot("default")
+	state := p.Snapshot()
 	if state.ListenerCount != 2 {
 		t.Fatalf("listener count = %d, want 2", state.ListenerCount)
 	}
 	if len(state.Listeners) != 2 || state.Listeners[0] != "alice" || state.Listeners[1] != "bob" {
 		t.Fatalf("listeners = %v, want [alice bob]", state.Listeners)
+	}
+}
+
+func TestCloseSubscribersClosesActiveSubscriptions(t *testing.T) {
+	p := NewPlayback("default")
+	ch, cancel := p.Subscribe(ActiveListener{UserID: "user1", Username: "alice"})
+	defer cancel()
+	<-ch
+
+	p.CloseSubscribers()
+
+	if _, ok := <-ch; ok {
+		t.Fatal("subscription channel remained open")
+	}
+	state := p.Snapshot()
+	if state.ListenerCount != 0 {
+		t.Fatalf("listener count = %d, want 0", state.ListenerCount)
 	}
 }

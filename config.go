@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
 
 	appauth "listen-party/internal/auth"
 )
@@ -15,17 +18,29 @@ type AuthConfig struct {
 }
 
 type Config struct {
-	Addr         string     `json:"addr"`
-	MusicDirs    []string   `json:"music_dirs"`
-	DatabasePath string     `json:"database_path"`
-	ScanWorkers  int        `json:"scan_workers"`
-	Auth         AuthConfig `json:"auth"`
+	Addr         string       `json:"addr"`
+	MusicDirs    []string     `json:"music_dirs"`
+	DatabasePath string       `json:"database_path"`
+	ScanWorkers  int          `json:"scan_workers"`
+	Rooms        []RoomConfig `json:"rooms"`
+	Auth         AuthConfig   `json:"auth"`
 }
 
 const (
 	defaultScanWorkers = 16
 	maxScanWorkers     = 256
+	defaultRoomID      = "public"
 )
+
+var roomIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
+type RoomConfig struct {
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Public        bool     `json:"public"`
+	AllowedRoles  []string `json:"allowed_roles,omitempty"`
+	AllowedGroups []string `json:"allowed_groups,omitempty"`
+}
 
 func DefaultConfigDir() (string, error) {
 	base, err := os.UserConfigDir()
@@ -165,6 +180,7 @@ func NewDefaultConfig() (Config, error) {
 		MusicDirs:    []string{musicDir},
 		DatabasePath: dbPath,
 		ScanWorkers:  defaultScanWorkers,
+		Rooms:        []RoomConfig{{ID: defaultRoomID, Name: "Public Room", Public: true}},
 		Auth: AuthConfig{
 			PocketBase: appauth.DefaultConfig(configDir),
 		},
@@ -189,6 +205,11 @@ func (c Config) Validate() error {
 	if c.Auth.PocketBase.DataDir == "" {
 		return errors.New("auth.pocketbase.data_dir is required")
 	}
+	if len(c.Rooms) > 0 {
+		if err := validateRooms(c.Rooms); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -206,6 +227,21 @@ func (c *Config) ApplyDefaults() error {
 	if c.ScanWorkers == 0 {
 		c.ScanWorkers = defaultScanWorkers
 	}
+	if len(c.Rooms) == 0 {
+		c.Rooms = []RoomConfig{{ID: defaultRoomID, Name: "Public Room", Public: true}}
+	}
+	for i := range c.Rooms {
+		c.Rooms[i].ID = strings.TrimSpace(c.Rooms[i].ID)
+		c.Rooms[i].Name = strings.TrimSpace(c.Rooms[i].Name)
+		if c.Rooms[i].ID == "" && i == 0 {
+			c.Rooms[i].ID = defaultRoomID
+		}
+		if c.Rooms[i].Name == "" {
+			c.Rooms[i].Name = c.Rooms[i].ID
+		}
+		c.Rooms[i].AllowedRoles = normalizeConfigList(c.Rooms[i].AllowedRoles)
+		c.Rooms[i].AllowedGroups = normalizeConfigList(c.Rooms[i].AllowedGroups)
+	}
 	if c.Auth.PocketBase.DataDir == "" {
 		configDir, err := DefaultConfigDir()
 		if err != nil {
@@ -214,6 +250,58 @@ func (c *Config) ApplyDefaults() error {
 		c.Auth.PocketBase = appauth.DefaultConfig(configDir)
 	}
 	return nil
+}
+
+func validateRooms(rooms []RoomConfig) error {
+	if len(rooms) == 0 {
+		return errors.New("rooms must contain at least one room")
+	}
+	seen := make(map[string]struct{}, len(rooms))
+	hasPublic := false
+	reserved := []string{"admin", "api", "assets", "authAdmin", "events", "healthz", "login", "logout", "media", "rooms"}
+	for _, room := range rooms {
+		if !roomIDPattern.MatchString(room.ID) {
+			return fmt.Errorf("room id %q must be lowercase URL-safe text", room.ID)
+		}
+		if slices.Contains(reserved, room.ID) {
+			return fmt.Errorf("room id %q is reserved", room.ID)
+		}
+		if _, ok := seen[room.ID]; ok {
+			return fmt.Errorf("duplicate room id %q", room.ID)
+		}
+		seen[room.ID] = struct{}{}
+		if room.Name == "" {
+			return fmt.Errorf("room %q name is required", room.ID)
+		}
+		if room.Public {
+			hasPublic = true
+		}
+		for _, role := range room.AllowedRoles {
+			if role != string(appauth.RoleListener) && role != string(appauth.RoleAdmin) {
+				return fmt.Errorf("room %q allowed role %q must be listener or admin", room.ID, role)
+			}
+		}
+		for _, group := range room.AllowedGroups {
+			if group == "" {
+				return fmt.Errorf("room %q allowed_groups must not contain empty values", room.ID)
+			}
+		}
+	}
+	if !hasPublic {
+		return errors.New("rooms must contain at least one public room")
+	}
+	return nil
+}
+
+func normalizeConfigList(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" && !slices.Contains(out, value) {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func (c Config) EnsureMusicDirs() error {
