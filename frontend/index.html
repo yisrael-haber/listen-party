@@ -32,6 +32,14 @@
           <span id="libraryStatus" class="status"></span>
         </div>
         <form id="searchForm">
+          <label class="search-field">
+            <span>Search by</span>
+            <select id="searchField" name="field">
+              <option value="title">Title</option>
+              <option value="artist">Artist</option>
+              <option value="album">Album</option>
+            </select>
+          </label>
           <label class="search-box">
             <input id="q" name="q" type="search" placeholder="Search MP3 library" autocomplete="off">
             <span class="search-icon" aria-hidden="true"></span>

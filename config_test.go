@@ -32,6 +32,21 @@ func TestValidateScanWorkers(t *testing.T) {
 	}
 }
 
+func TestValidateBannedIPs(t *testing.T) {
+	cfg := Config{
+		MusicDirs:   []string{"/music"},
+		ScanWorkers: defaultScanWorkers,
+		BannedIPs:   []string{"192.168.1.50", "::1"},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid banned_ips rejected: %v", err)
+	}
+	cfg.BannedIPs = []string{"not-an-ip"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("invalid banned ip accepted")
+	}
+}
+
 func TestValidateRooms(t *testing.T) {
 	cfg := Config{
 		MusicDirs:   []string{"/music"},

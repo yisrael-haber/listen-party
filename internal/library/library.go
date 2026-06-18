@@ -69,6 +69,7 @@ type Library struct {
 
 type ScanStatus struct {
 	Scanning            bool      `json:"scanning"`
+	Roots               []string  `json:"roots"`
 	LastStarted         time.Time `json:"last_started"`
 	LastCompleted       time.Time `json:"last_completed"`
 	LastError           string    `json:"last_error"`
@@ -146,7 +147,24 @@ func (l *Library) Close() error {
 }
 
 func (l *Library) migrate(ctx context.Context) error {
-	_, err := l.db.ExecContext(ctx, `
+	reset, err := l.trackSchemaNeedsReset(ctx)
+	if err != nil {
+		return err
+	}
+	ftsExists, err := l.tableExists(ctx, "tracks_fts")
+	if err != nil {
+		return err
+	}
+	if reset {
+		if _, err := l.db.ExecContext(ctx, `
+DROP TABLE IF EXISTS tracks_fts;
+DROP TABLE tracks;
+`); err != nil {
+			return err
+		}
+		ftsExists = false
+	}
+	_, err = l.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS tracks (
 	id INTEGER PRIMARY KEY,
 	path TEXT NOT NULL UNIQUE,
@@ -157,16 +175,79 @@ CREATE TABLE IF NOT EXISTS tracks (
 	duration_ms INTEGER NOT NULL DEFAULT 0,
 	size INTEGER NOT NULL,
 	mod_time INTEGER NOT NULL,
-	search_text TEXT NOT NULL,
 	available INTEGER NOT NULL DEFAULT 1
 );
-CREATE INDEX IF NOT EXISTS tracks_search_idx ON tracks(search_text);
 CREATE INDEX IF NOT EXISTS tracks_available_idx ON tracks(available);
+CREATE VIRTUAL TABLE IF NOT EXISTS tracks_fts USING fts5(
+	title,
+	artist,
+	album,
+	content='tracks',
+	content_rowid='id',
+	prefix='2 3'
+);
+CREATE TRIGGER IF NOT EXISTS tracks_ai AFTER INSERT ON tracks BEGIN
+	INSERT INTO tracks_fts(rowid, title, artist, album) VALUES (new.id, new.title, new.artist, new.album);
+END;
+CREATE TRIGGER IF NOT EXISTS tracks_ad AFTER DELETE ON tracks BEGIN
+	INSERT INTO tracks_fts(tracks_fts, rowid, title, artist, album) VALUES ('delete', old.id, old.title, old.artist, old.album);
+END;
+CREATE TRIGGER IF NOT EXISTS tracks_au AFTER UPDATE ON tracks BEGIN
+	INSERT INTO tracks_fts(tracks_fts, rowid, title, artist, album) VALUES ('delete', old.id, old.title, old.artist, old.album);
+	INSERT INTO tracks_fts(rowid, title, artist, album) VALUES (new.id, new.title, new.artist, new.album);
+END;
 `)
+	if err != nil {
+		return err
+	}
+	if !ftsExists {
+		_, err = l.db.ExecContext(ctx, `INSERT INTO tracks_fts(tracks_fts) VALUES('rebuild')`)
+	}
 	return err
 }
 
-func (l *Library) loadKnownTracks(ctx context.Context) (map[string]int64, error) {
+func (l *Library) trackSchemaNeedsReset(ctx context.Context) (bool, error) {
+	exists, err := l.tableExists(ctx, "tracks")
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, nil
+	}
+
+	rows, err := l.db.QueryContext(ctx, `PRAGMA table_info(tracks)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var columnName, columnType string
+		var notNull, pk int
+		var defaultValue any
+		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		columns[columnName] = true
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return columns["search_title"] || columns["search_artist"] || columns["search_album"] || columns["search_text"], nil
+}
+
+func (l *Library) tableExists(ctx context.Context, name string) (bool, error) {
+	var found string
+	err := l.db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (l *Library) loadKnownTracks(ctx context.Context, roots []string) (map[string]int64, error) {
 	rows, err := l.db.QueryContext(ctx, `SELECT path, mod_time FROM tracks WHERE available = 1`)
 	if err != nil {
 		return nil, err
@@ -180,6 +261,9 @@ func (l *Library) loadKnownTracks(ctx context.Context) (map[string]int64, error)
 		if err := rows.Scan(&path, &modTime); err != nil {
 			return nil, err
 		}
+		if len(roots) > 0 && !pathInRoots(path, roots) {
+			continue
+		}
 		known[path] = modTime
 	}
 	if err := rows.Err(); err != nil {
@@ -188,9 +272,26 @@ func (l *Library) loadKnownTracks(ctx context.Context) (map[string]int64, error)
 	return known, nil
 }
 
+func pathInRoots(path string, roots []string) bool {
+	for _, root := range roots {
+		if pathInRoot(path, root) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathInRoot(path string, root string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
 const upsertTrackSQL = `
-INSERT INTO tracks(path, title, artist, album, track_no, duration_ms, size, mod_time, search_text, available)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+INSERT INTO tracks(path, title, artist, album, track_no, duration_ms, size, mod_time, available)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, 1)
 ON CONFLICT(path) DO UPDATE SET
 	title = excluded.title,
 	artist = excluded.artist,
@@ -199,7 +300,6 @@ ON CONFLICT(path) DO UPDATE SET
 	duration_ms = excluded.duration_ms,
 	size = excluded.size,
 	mod_time = excluded.mod_time,
-	search_text = excluded.search_text,
 	available = 1
 `
 
@@ -229,8 +329,7 @@ func (l *Library) flushTracks(ctx context.Context, tracks []Track) error {
 		if t.Title == "" {
 			t.Title = fallbackTitle(t.path)
 		}
-		search := searchText(t)
-		if _, err := stmt.ExecContext(ctx, t.path, t.Title, t.Artist, t.Album, t.TrackNo, t.DurationMS, t.Size, t.ModTime.Unix(), search); err != nil {
+		if _, err := stmt.ExecContext(ctx, t.path, t.Title, t.Artist, t.Album, t.TrackNo, t.DurationMS, t.Size, t.ModTime.Unix()); err != nil {
 			return err
 		}
 	}
@@ -339,22 +438,51 @@ func (l *Library) deletePathBatch(ctx context.Context, paths []string) error {
 }
 
 func (l *Library) Search(ctx context.Context, q string) ([]Track, error) {
+	return l.SearchField(ctx, q, "")
+}
+
+func (l *Library) SearchField(ctx context.Context, q string, field string) ([]Track, error) {
 	limit := maxTrackQueryLimit
 	if strings.TrimSpace(q) == "" {
 		return l.recent(ctx, limit)
 	}
-	needle := "%" + strings.ReplaceAll(normalizeSearch(q), "%", `\%`) + "%"
+	query := searchFTSQuery(q, field)
+	if query == "" {
+		return l.recent(ctx, limit)
+	}
 	rows, err := l.db.QueryContext(ctx, `
-SELECT id, path, title, artist, album, track_no, duration_ms, size, mod_time, available
+SELECT tracks.id, tracks.path, tracks.title, tracks.artist, tracks.album, tracks.track_no, tracks.duration_ms, tracks.size, tracks.mod_time, tracks.available
 FROM tracks
-WHERE available = 1 AND search_text LIKE ? ESCAPE '\'
-ORDER BY title COLLATE NOCASE ASC, artist COLLATE NOCASE ASC, album COLLATE NOCASE ASC, track_no ASC
-LIMIT ?`, needle, limit)
+JOIN tracks_fts ON tracks_fts.rowid = tracks.id
+WHERE tracks.available = 1 AND tracks_fts MATCH ?
+ORDER BY tracks.title COLLATE NOCASE ASC, tracks.artist COLLATE NOCASE ASC, tracks.album COLLATE NOCASE ASC, tracks.track_no ASC
+LIMIT ?`, query, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return scanTracks(rows)
+}
+
+func searchFTSQuery(q string, field string) string {
+	terms := strings.Fields(normalizeSearch(q))
+	if len(terms) == 0 {
+		return ""
+	}
+	for i, term := range terms {
+		terms[i] = term + "*"
+	}
+	query := strings.Join(terms, " ")
+	switch field {
+	case "title":
+		return "title: " + query
+	case "artist":
+		return "artist: " + query
+	case "album":
+		return "album: " + query
+	default:
+		return query
+	}
 }
 
 func (l *Library) recent(ctx context.Context, limit int) ([]Track, error) {
@@ -530,19 +658,32 @@ type scanFile struct {
 }
 
 func (l *Library) Scan(ctx context.Context) (err error) {
+	l.mu.RLock()
+	dirs := append([]string(nil), l.dirs...)
+	workers := l.workers
+	l.mu.RUnlock()
+	return l.scanDirs(ctx, dirs, workers, nil)
+}
+
+func (l *Library) ScanDir(ctx context.Context, dir string) error {
+	l.mu.RLock()
+	workers := l.workers
+	l.mu.RUnlock()
+	dirs := []string{dir}
+	return l.scanDirs(ctx, dirs, workers, dirs)
+}
+
+func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, deletionRoots []string) (err error) {
 	if !l.scanMu.TryLock() {
 		return ErrScanInProgress
 	}
 	defer l.scanMu.Unlock()
 
-	l.mu.RLock()
-	dirs := append([]string(nil), l.dirs...)
-	workers := l.workers
-	l.mu.RUnlock()
 	started := time.Now()
 	l.statusMu.Lock()
 	l.status = ScanStatus{
 		Scanning:    true,
+		Roots:       append([]string(nil), dirs...),
 		LastStarted: started,
 	}
 	l.statusMu.Unlock()
@@ -561,7 +702,7 @@ func (l *Library) Scan(ctx context.Context) (err error) {
 	var parsed, indexed, skipped int64
 	var walkFailed bool
 
-	known, err := l.loadKnownTracks(ctx)
+	known, err := l.loadKnownTracks(ctx, deletionRoots)
 	if err != nil {
 		return err
 	}
@@ -810,10 +951,6 @@ func normalizeSearch(s string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
-}
-
-func searchText(t Track) string {
-	return normalizeSearch(strings.Join([]string{t.Title, t.Artist, t.Album}, " "))
 }
 
 func fallbackTitle(path string) string {

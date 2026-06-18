@@ -100,6 +100,43 @@ func TestPrivateRoomPageRequiresRoomAccess(t *testing.T) {
 	}
 }
 
+func TestBannedIPIsRejectedButHealthzPasses(t *testing.T) {
+	server := testServer(&Server{
+		Auth:   fakeAuth{roles: []Role{RoleListener}},
+		Config: Config{BannedIPs: []string{"192.168.1.50"}},
+	}).Handler()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "192.168.1.50:12345"
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("banned / status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.RemoteAddr = "192.168.1.50:12345"
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("banned /healthz status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+func TestRescanDirRequiresConfiguredMusicDir(t *testing.T) {
+	server := testServer(&Server{
+		Auth:   fakeAuth{roles: []Role{RoleAdmin}},
+		Config: Config{MusicDirs: []string{"/music/allowed"}},
+	}).Handler()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/rescan-dir", strings.NewReader(`{"music_dir":"/music/other"}`))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("/api/admin/rescan-dir status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
 func TestQueueMoveRequiresDirection(t *testing.T) {
 	server := testServer(&Server{
 		Auth: fakeAuth{

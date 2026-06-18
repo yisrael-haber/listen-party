@@ -2,6 +2,7 @@ const configStatus = document.getElementById("configStatus");
 const configForm = document.getElementById("configForm");
 const configAddr = document.getElementById("configAddr");
 const configMusicDirs = document.getElementById("configMusicDirs");
+const configBannedIPs = document.getElementById("configBannedIPs");
 const configScanWorkers = document.getElementById("configScanWorkers");
 const configKeycloakEnabled = document.getElementById("configKeycloakEnabled");
 const configKeycloakIssuer = document.getElementById("configKeycloakIssuer");
@@ -9,6 +10,7 @@ const configKeycloakClientID = document.getElementById("configKeycloakClientID")
 const configKeycloakClientSecret = document.getElementById("configKeycloakClientSecret");
 const configKeycloakDisplayName = document.getElementById("configKeycloakDisplayName");
 const addMusicDirButton = document.getElementById("addMusicDir");
+const addBannedIPButton = document.getElementById("addBannedIP");
 const addRoomButton = document.getElementById("addRoom");
 const roomsList = document.getElementById("roomsList");
 const rescanButton = document.getElementById("rescan");
@@ -27,6 +29,7 @@ function renderConfig(cfg) {
   const keycloak = auth.keycloak || {};
   configAddr.value = cfg.addr || "";
   renderMusicDirs(cfg.music_dirs || []);
+  renderBannedIPs(cfg.banned_ips || []);
   configScanWorkers.value = cfg.scan_workers || 16;
   configKeycloakEnabled.checked = Boolean(keycloak.enabled);
   configKeycloakIssuer.value = keycloak.issuer_url || "";
@@ -40,6 +43,7 @@ function readConfigForm() {
   return {
     addr: configAddr.value.trim(),
     music_dirs: readMusicDirs(),
+    banned_ips: readBannedIPs(),
     scan_workers: Math.max(1, Math.min(256, Math.floor(Number(configScanWorkers.value) || 16))),
     rooms: readRooms(),
     auth: {
@@ -58,8 +62,28 @@ function readConfigForm() {
 
 function renderMusicDirs(paths) {
   const rows = paths.length > 0 ? paths : [""];
-  configMusicDirs.replaceChildren(...rows.map((path) => renderListItem(path, "music-dir-input", "/path/to/music", "Music directory")));
+  configMusicDirs.replaceChildren(...rows.map(renderMusicDirItem));
   updateListRemoveButtons(configMusicDirs);
+}
+
+function renderMusicDirItem(path) {
+  const row = renderListItem(path, "music-dir-input", "/path/to/music", "Music directory");
+  row.classList.add("music-dir-item");
+  const rescan = document.createElement("button");
+  rescan.className = "secondary compact path-rescan";
+  rescan.type = "button";
+  rescan.textContent = "Rescan";
+  rescan.addEventListener("click", async () => {
+    await rescanMusicDir(row.querySelector(".music-dir-input").value.trim(), rescan);
+  });
+  row.insertBefore(rescan, row.lastElementChild);
+  return row;
+}
+
+function renderBannedIPs(ips) {
+  const rows = ips.length > 0 ? ips : [""];
+  configBannedIPs.replaceChildren(...rows.map((ip) => renderListItem(ip, "banned-ip-input", "192.168.1.50", "Banned IP address")));
+  updateListRemoveButtons(configBannedIPs);
 }
 
 function renderListItem(value, inputClass, placeholder, ariaLabel) {
@@ -91,14 +115,25 @@ function renderListItem(value, inputClass, placeholder, ariaLabel) {
 }
 
 function addMusicDir(path = "") {
-  const row = renderListItem(path, "music-dir-input", "/path/to/music", "Music directory");
+  const row = renderMusicDirItem(path);
   configMusicDirs.append(row);
   updateListRemoveButtons(configMusicDirs);
   row.querySelector(".music-dir-input").focus();
 }
 
+function addBannedIP(ip = "") {
+  const row = renderListItem(ip, "banned-ip-input", "192.168.1.50", "Banned IP address");
+  configBannedIPs.append(row);
+  updateListRemoveButtons(configBannedIPs);
+  row.querySelector(".banned-ip-input").focus();
+}
+
 function readMusicDirs() {
   return [...configMusicDirs.querySelectorAll(".music-dir-input")].map((input) => input.value.trim()).filter(Boolean);
+}
+
+function readBannedIPs() {
+  return [...configBannedIPs.querySelectorAll(".banned-ip-input")].map((input) => input.value.trim()).filter(Boolean);
 }
 
 function updateListRemoveButtons(container) {
@@ -252,6 +287,10 @@ function formatRate(value) {
   return `${value.toFixed(value >= 10 ? 0 : 1)}/s`;
 }
 
+function shortPath(path) {
+  return (path || "").split(/[\\/]/).filter(Boolean).pop() || path;
+}
+
 function renderScanStatus(scan) {
   if (!scan) {
     scanStatus.textContent = "";
@@ -259,7 +298,9 @@ function renderScanStatus(scan) {
     return false;
   }
   if (scan.scanning) {
-    scanStatus.textContent = `Scanning ${scan.mp3_seen || 0} seen, ${scan.indexed || 0} indexed, ${scan.unchanged || 0} unchanged, ${formatRate(scan.recent_tracks_per_sec)} recent`;
+    const roots = scan.roots || [];
+    const scope = roots.length === 1 ? `Scanning ${shortPath(roots[0])}` : `Scanning ${roots.length || 0} folders`;
+    scanStatus.textContent = `${scope}: ${scan.mp3_seen || 0} seen, ${scan.indexed || 0} indexed, ${scan.unchanged || 0} unchanged, ${formatRate(scan.recent_tracks_per_sec)} recent`;
     scanStatus.dataset.kind = "working";
     return true;
   }
@@ -304,6 +345,10 @@ addMusicDirButton.addEventListener("click", () => {
   addMusicDir();
 });
 
+addBannedIPButton.addEventListener("click", () => {
+  addBannedIP();
+});
+
 addRoomButton.addEventListener("click", () => {
   roomsList.append(renderRoomRow());
   updateRoomRemoveButtons();
@@ -329,6 +374,35 @@ rescanButton.addEventListener("click", async () => {
     rescanButton.disabled = false;
   }
 });
+
+async function rescanMusicDir(path, button) {
+  if (!path) {
+    setRescanStatus("Choose a configured path first", "error");
+    return;
+  }
+  button.disabled = true;
+  setRescanStatus("Rescanning folder...", "working");
+  try {
+    const res = await fetch("/api/admin/rescan-dir", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({music_dir: path}),
+    });
+    if (res.status === 409) {
+      setRescanStatus("Scan already in progress", "working");
+      await loadLibraryStatus();
+      return;
+    }
+    if (!res.ok) throw new Error(await res.text());
+    setRescanStatus("Folder rescanned", "ok");
+    await loadLibraryStatus();
+  } catch (err) {
+    setRescanStatus("Folder rescan failed", "error");
+    console.error(err);
+  } finally {
+    button.disabled = false;
+  }
+}
 
 loadConfig();
 loadLibraryStatus();

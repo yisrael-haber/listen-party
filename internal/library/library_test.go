@@ -2,11 +2,14 @@ package library_test
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 
 	musiclib "listen-party/internal/library"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestArtworkReadsEmbeddedPicture(t *testing.T) {
@@ -101,6 +104,62 @@ func TestSearchOrdersByTitleAscending(t *testing.T) {
 	}
 }
 
+func TestSearchFieldFiltersTitleArtistAndAlbum(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	files := map[string][]byte{
+		"Alex Clare - Too Close.mp3": []byte("not really mp3"),
+		"album.mp3":                  id3v23TextTag(map[string]string{"TIT2": "Blue Line", "TPE1": "Massive Attack", "TALB": "Protection"}),
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	lib, err := musiclib.Open(ctx, filepath.Join(t.TempDir(), "tracks.sqlite"), []string{dir}, 1)
+	if err != nil {
+		t.Fatalf("open library: %v", err)
+	}
+	defer lib.Close()
+	if err := lib.Scan(ctx); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	titleMatches, err := lib.SearchField(ctx, "alex", "title")
+	if err != nil {
+		t.Fatalf("search title: %v", err)
+	}
+	if len(titleMatches) != 0 {
+		t.Fatalf("title search returned %d tracks, want 0", len(titleMatches))
+	}
+	artistMatches, err := lib.SearchField(ctx, "alex", "artist")
+	if err != nil {
+		t.Fatalf("search artist: %v", err)
+	}
+	if len(artistMatches) != 1 || artistMatches[0].Artist != "Alex Clare" {
+		t.Fatalf("artist search = %#v, want Alex Clare match", artistMatches)
+	}
+	albumMatches, err := lib.SearchField(ctx, "protection", "album")
+	if err != nil {
+		t.Fatalf("search album: %v", err)
+	}
+	if len(albumMatches) != 1 || albumMatches[0].Album != "Protection" {
+		t.Fatalf("album search = %#v, want Protection match", albumMatches)
+	}
+}
+
+func TestSQLiteFTS5Available(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "tracks.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, `CREATE VIRTUAL TABLE fts_check USING fts5(value)`); err != nil {
+		t.Fatalf("create fts5 table: %v", err)
+	}
+}
+
 func TestScanSkipsUnchangedFiles(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -160,12 +219,65 @@ func TestScanDeletesMissingTracksAfterSuccessfulWalk(t *testing.T) {
 	}
 }
 
+func TestScanDirDeletesOnlyMissingTracksUnderThatDirectory(t *testing.T) {
+	ctx := context.Background()
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	removePath := filepath.Join(rootA, "remove.mp3")
+	keepPath := filepath.Join(rootB, "keep.mp3")
+	for _, path := range []string{removePath, keepPath} {
+		if err := os.WriteFile(path, []byte("not really mp3"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	lib, err := musiclib.Open(ctx, filepath.Join(t.TempDir(), "tracks.sqlite"), []string{rootA, rootB}, 1)
+	if err != nil {
+		t.Fatalf("open library: %v", err)
+	}
+	defer lib.Close()
+	if err := lib.Scan(ctx); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if err := os.Remove(removePath); err != nil {
+		t.Fatalf("remove mp3: %v", err)
+	}
+	if err := lib.ScanDir(ctx, rootA); err != nil {
+		t.Fatalf("scan dir: %v", err)
+	}
+	count, err := lib.Count(ctx)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count after scoped delete = %d, want 1", count)
+	}
+	tracks, err := lib.Search(ctx, "keep")
+	if err != nil {
+		t.Fatalf("search keep: %v", err)
+	}
+	if len(tracks) != 1 || tracks[0].Title != "keep" {
+		t.Fatalf("remaining tracks = %#v, want keep", tracks)
+	}
+}
+
 func id3v23PictureTag(image []byte) []byte {
 	body := append([]byte{0, 'i', 'm', 'a', 'g', 'e', '/', 'j', 'p', 'e', 'g', 0, 3, 0}, image...)
 	frame := []byte{'A', 'P', 'I', 'C', byte(len(body) >> 24), byte(len(body) >> 16), byte(len(body) >> 8), byte(len(body)), 0, 0}
 	frame = append(frame, body...)
 	size := len(frame)
 	return append([]byte{'I', 'D', '3', 3, 0, 0, byte(size >> 21), byte(size >> 14), byte(size >> 7), byte(size)}, frame...)
+}
+
+func id3v23TextTag(frames map[string]string) []byte {
+	var body []byte
+	for id, text := range frames {
+		payload := append([]byte{0}, []byte(text)...)
+		frame := []byte{id[0], id[1], id[2], id[3], byte(len(payload) >> 24), byte(len(payload) >> 16), byte(len(payload) >> 8), byte(len(payload)), 0, 0}
+		body = append(body, append(frame, payload...)...)
+	}
+	size := len(body)
+	return append([]byte{'I', 'D', '3', 3, 0, 0, byte(size >> 21), byte(size >> 14), byte(size >> 7), byte(size)}, body...)
 }
 
 func TestScanSkipsIgnoredDirectories(t *testing.T) {

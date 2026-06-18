@@ -18,6 +18,7 @@ const durationEl = document.getElementById("duration");
 const muteButton = document.getElementById("mute");
 const volumeInput = document.getElementById("volume");
 const searchInput = document.getElementById("q");
+const searchField = document.getElementById("searchField");
 const libraryStatus = document.getElementById("libraryStatus");
 const currentUserEl = document.getElementById("currentUser");
 const roomSelect = document.getElementById("roomSelect");
@@ -26,6 +27,8 @@ const defaultVolume = 0.25;
 const syncToleranceSeconds = 1;
 const syncGuardMS = 1000;
 const searchDebounceMS = 300;
+const searchTextStorageKey = "listen-party.searchText";
+const searchFieldStorageKey = "listen-party.searchField";
 
 let lastState = null;
 let lastStateReceivedAt = 0;
@@ -37,6 +40,30 @@ let currentRoomID = decodeURIComponent(location.pathname.match(/^\/rooms\/([^/]+
 
 function roomAPI(path) {
   return `/rooms/${encodeURIComponent(currentRoomID)}${path}`;
+}
+
+function storageGet(key) {
+  try {
+    return localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+function storageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Persistence is optional; private browsing or storage policies may reject it.
+  }
+}
+
+function restoreSearchPreferences() {
+  searchInput.value = storageGet(searchTextStorageKey);
+  const field = storageGet(searchFieldStorageKey);
+  if ([...searchField.options].some((option) => option.value === field)) {
+    searchField.value = field;
+  }
 }
 
 function closeEvents() {
@@ -432,8 +459,10 @@ async function loadRooms() {
 
 async function runSearch() {
   const q = searchInput.value.trim();
-  const tracks = await api(`/api/search?q=${encodeURIComponent(q)}`);
-  if (q !== searchInput.value.trim()) {
+  const field = searchField.value;
+  const params = new URLSearchParams({q, field});
+  const tracks = await api(`/api/search?${params}`);
+  if (q !== searchInput.value.trim() || field !== searchField.value) {
     return;
   }
   resultsEl.replaceChildren(...tracks.map((track) => trackRow(track, [
@@ -448,11 +477,18 @@ document.getElementById("searchForm").addEventListener("submit", async (event) =
 });
 
 searchInput.addEventListener("input", () => {
+  storageSet(searchTextStorageKey, searchInput.value);
   clearTimeout(searchTimer);
   resultsEl.replaceChildren();
   searchTimer = setTimeout(() => {
     runSearch().catch(console.error);
   }, searchDebounceMS);
+});
+
+searchField.addEventListener("change", () => {
+  storageSet(searchFieldStorageKey, searchField.value);
+  clearTimeout(searchTimer);
+  runSearch().catch(console.error);
 });
 
 for (const [id, action] of [["previous", "previous"], ["skip", "skip"]]) {
@@ -528,6 +564,7 @@ document.addEventListener("keydown", (event) => {
   presenceButton.setAttribute("aria-expanded", "false");
 });
 
+restoreSearchPreferences();
 renderPlaybackButton(false);
 setVolume(0);
 renderVolumeButton();

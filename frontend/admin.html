@@ -31,6 +31,13 @@
               <input id="configScanWorkers" name="scan_workers" type="number" min="1" max="256" step="1">
             </label>
           </div>
+          <div class="list-editor">
+            <div class="list-editor-head">
+              <span>Banned IP addresses</span>
+              <button id="addBannedIP" class="secondary compact" type="button">Add IP</button>
+            </div>
+            <div id="configBannedIPs" class="list-editor-items"></div>
+          </div>
         </section>
 
         <section class="config-section">

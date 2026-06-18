@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,6 +23,7 @@ type Config struct {
 	MusicDirs    []string   `json:"music_dirs"`
 	DatabasePath string     `json:"-"`
 	ScanWorkers  int        `json:"scan_workers"`
+	BannedIPs    []string   `json:"banned_ips"`
 	Rooms        []Room     `json:"rooms"`
 	Auth         AuthConfig `json:"auth"`
 }
@@ -165,6 +167,7 @@ func NewDefaultConfigForRoot(configDir string) Config {
 		MusicDirs:    []string{filepath.Join(configDir, "music")},
 		DatabasePath: databasePath(configDir),
 		ScanWorkers:  defaultScanWorkers,
+		BannedIPs:    []string{},
 		Rooms:        []Room{{ID: defaultRoomID, Name: "Public Room", Public: true}},
 		Auth: AuthConfig{
 			PocketBase: appauth.DefaultConfig(configDir),
@@ -185,6 +188,11 @@ func (c Config) Validate() error {
 	for _, dir := range c.MusicDirs {
 		if dir == "" {
 			return errors.New("music_dirs must not contain empty paths")
+		}
+	}
+	for _, ip := range c.BannedIPs {
+		if _, err := netip.ParseAddr(ip); err != nil {
+			return fmt.Errorf("banned_ips contains invalid IP %q", ip)
 		}
 	}
 	if len(c.Rooms) > 0 {
@@ -217,6 +225,10 @@ func (c *Config) ApplyDefaultsForRoot(configRoot string) error {
 	c.DatabasePath = databasePath(configRoot)
 	if c.ScanWorkers == 0 {
 		c.ScanWorkers = defaultScanWorkers
+	}
+	c.BannedIPs = normalizeConfigList(c.BannedIPs)
+	if c.BannedIPs == nil {
+		c.BannedIPs = []string{}
 	}
 	if len(c.Rooms) == 0 {
 		c.Rooms = []Room{{ID: defaultRoomID, Name: "Public Room", Public: true}}

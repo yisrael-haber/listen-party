@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,6 +46,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/library", requireListener(http.HandlerFunc(s.handleLibrary)))
 	mux.Handle("POST /rooms/{room}/api/command", requireListener(http.HandlerFunc(s.handleCommand)))
 	mux.Handle("POST /api/admin/rescan", requireAdmin(http.HandlerFunc(s.handleRescan)))
+	mux.Handle("POST /api/admin/rescan-dir", requireAdmin(http.HandlerFunc(s.handleRescanDir)))
 	mux.Handle("GET /api/admin/config", requireAdmin(http.HandlerFunc(s.handleConfig)))
 	mux.Handle("PUT /api/admin/config", requireAdmin(http.HandlerFunc(s.handleConfigUpdate)))
 	mux.Handle("GET /media/{id}/artwork", requireListener(http.HandlerFunc(s.handleArtwork)))
@@ -51,15 +55,54 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	if s.AuthRoutes == nil {
-		return mux
+		return s.rejectBannedIPs(mux)
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isAuthRoute(r.URL.Path) {
 			s.AuthRoutes.ServeHTTP(w, r)
 			return
 		}
 		mux.ServeHTTP(w, r)
 	})
+	return s.rejectBannedIPs(handler)
+}
+
+func (s *Server) rejectBannedIPs(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ip, ok := clientIP(r.RemoteAddr)
+		if ok && s.ipIsBanned(ip) {
+			slog.Warn("blocked banned ip", "remote", r.RemoteAddr, "ip", ip.String(), "path", r.URL.Path)
+			http.Error(w, "You are not allowed to access this resource, and have been banned due to suspicious activity.", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) ipIsBanned(ip netip.Addr) bool {
+	s.configMu.RLock()
+	banned := append([]string(nil), s.Config.BannedIPs...)
+	s.configMu.RUnlock()
+	for _, value := range banned {
+		bannedIP, err := netip.ParseAddr(value)
+		if err == nil && bannedIP == ip {
+			return true
+		}
+	}
+	return false
+}
+
+func clientIP(remoteAddr string) (netip.Addr, bool) {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = strings.Trim(remoteAddr, "[]")
+	}
+	ip, err := netip.ParseAddr(host)
+	return ip, err == nil
 }
 
 func isAuthRoute(path string) bool {
@@ -248,7 +291,7 @@ func (s *Server) playbackExpired(ctx context.Context, state PlaybackState) bool 
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
-	tracks, err := s.Library.Search(r.Context(), q)
+	tracks, err := s.Library.SearchField(r.Context(), q, r.URL.Query().Get("field"))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -419,6 +462,47 @@ func (s *Server) handleRescan(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("count library after rescan", "remote", r.RemoteAddr, "duration", time.Since(started), "error", err)
 	} else {
 		slog.Info("library rescan completed", "remote", r.RemoteAddr, "duration", time.Since(started), "tracks", count)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleRescanDir(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MusicDir string `json:"music_dir"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	dir := strings.TrimSpace(req.MusicDir)
+	if dir == "" {
+		http.Error(w, "music_dir is required", http.StatusBadRequest)
+		return
+	}
+	s.configMu.RLock()
+	configured := append([]string(nil), s.Config.MusicDirs...)
+	s.configMu.RUnlock()
+	if !slices.Contains(configured, dir) {
+		http.Error(w, "music_dir must match a configured music directory", http.StatusBadRequest)
+		return
+	}
+
+	started := time.Now()
+	slog.Info("library directory rescan started", "remote", r.RemoteAddr, "music_dir", dir)
+	if err := s.Library.ScanDir(r.Context(), dir); err != nil {
+		if errors.Is(err, musiclib.ErrScanInProgress) {
+			slog.Info("library directory rescan ignored; already scanning", "remote", r.RemoteAddr, "music_dir", dir)
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		slog.Warn("library directory rescan failed", "remote", r.RemoteAddr, "music_dir", dir, "duration", time.Since(started), "error", err)
+		writeError(w, err)
+		return
+	}
+	count, err := s.Library.Count(r.Context())
+	if err != nil {
+		slog.Warn("count library after directory rescan", "remote", r.RemoteAddr, "music_dir", dir, "duration", time.Since(started), "error", err)
+	} else {
+		slog.Info("library directory rescan completed", "remote", r.RemoteAddr, "music_dir", dir, "duration", time.Since(started), "tracks", count)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

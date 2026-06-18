@@ -18,14 +18,17 @@ Working:
 
 - Recursive MP3 indexing from configured folders.
 - Incremental rescans skip unchanged files by path and modification time.
+- Full-library rescans and targeted rescans for individual configured music
+  folders.
 - Scans prune ignored subdirectories such as dot-directories, double-underscore
   directories, dependency/build folders, and common system recycle/cache folders.
 - Configurable parallel scan workers for metadata parsing.
 - Automatic first-run config creation.
-- SQLite-backed metadata and search.
+- SQLite-backed metadata and FTS5 library search.
 - Embedded listener UI and admin config UI.
 - Embedded PocketBase auth/admin dashboard mounted at `/authAdmin`.
 - Dedicated listener/admin app login mounted at `/login`.
+- Admin-managed exact IP ban list for blocking clients before auth.
 - Configurable rooms with one isolated shared playback state per room.
 - Public room access for every authenticated app user, with private room access
   driven by PocketBase user room IDs, groups, and admin role.
@@ -34,7 +37,9 @@ Working:
 - Queue add, remove, clear, move up/down, and move-to-next.
 - Recently played history with clear support.
 - Play immediately from search or history.
-- Dynamic search with 300 ms debounce and server-side result limits.
+- Dynamic library search by title, artist, or album with 300 ms debounce and
+  server-side result limits.
+- Browser-local persistence for the selected search field and search text.
 - Search results sorted by title ascending.
 - Server-sent events for shared state updates plus a periodic heartbeat.
 - Connected listener count.
@@ -77,9 +82,12 @@ preferences.
 
 The listener UI is a full-screen app:
 
-- Left rail: library search.
+- Left rail: library search with title, artist, and album modes.
 - Main area: previously played on the left, upcoming queue on the right.
 - Bottom player: previous, play/pause, next, seek, and local volume.
+
+Search mode and search text are remembered in the browser across refreshes.
+They are not shared between users or devices.
 
 The queue drains from the top. The top queue item is always the next track.
 Previously played is newest-first. Pressing previous pops the newest history
@@ -109,6 +117,7 @@ Default config:
   "addr": "0.0.0.0:8080",
   "music_dirs": ["${UserConfigDir}/listen-party/music"],
   "scan_workers": 16,
+  "banned_ips": [],
   "rooms": [
     {
       "id": "public",
@@ -198,10 +207,14 @@ Keycloak login, listen-party copies that claim into the PocketBase
 unchanged.
 
 Changing `addr`, the config path, or auth provider settings requires a restart.
-Updating music directories or scan worker count applies immediately; use the admin
-rescan button to refresh the library after changing music folders. Updating rooms
-also applies immediately for new room enumeration and API requests.
+Updating music directories or scan worker count applies immediately. Use the
+admin full rescan button after broad library changes, or a per-folder rescan
+when only one configured music directory changed. Updating rooms also applies
+immediately for new room enumeration and API requests.
 `scan_workers` must be between 1 and 256.
+
+`banned_ips` is an exact-match client IP block list. It is intended for direct
+LAN use and does not inspect proxy headers.
 
 Room IDs must be lowercase URL-safe text. A public room is visible to every
 authenticated app user. Admin users can access every room. For private room
@@ -320,12 +333,24 @@ The main files are:
 
 ## Future Direction
 
-Highest priority:
+Next product improvements:
 
-- Browser-level/manual test coverage for multi-tab synchronization.
-- Keep the playback model simple while hardening edge cases.
-Next:
+- Persistent playlists and favorites so users can keep music beyond the current
+  room queue.
+- Artist and album browsing, including album track lists, so the library is not
+  only search-driven.
+- Persistent room queues/history so a server restart does not erase active room
+  state.
+- Mobile layout polish for faster switching between library, queue, history, and
+  player controls.
+- Admin status view for active rooms, listener counts, scan state, storage
+  paths, and recent errors.
 
+Efficiency and hardening:
+
+- Tune FTS5 ranking and query behavior as real library sizes and search habits
+  become clearer.
+- Cache extracted artwork instead of parsing MP3 tags on every artwork request.
 - Evaluate SQLite WAL mode for better read/write overlap during scans. Prefer
   enabling it only after confirming the database lives on local storage, not a
   network/synced path.
@@ -333,7 +358,4 @@ Next:
   file edits become a real concern.
 - Add configurable ignored directory names if the built-in scanner pruning is
   not enough for real library layouts.
-- Consider SQLite FTS if search becomes slow around very large libraries.
-- Better admin-only surface and clearer listener/admin separation.
-- Optional room join secrets.
-- Authentication abstraction for non-LAN deployments.
+- Add browser-level/manual test coverage for multi-tab synchronization.
