@@ -19,6 +19,7 @@ type AuthConfig struct {
 }
 
 type Config struct {
+	Version      int        `json:"version"`
 	Addr         string     `json:"addr"`
 	MusicDirs    []string   `json:"music_dirs"`
 	DatabasePath string     `json:"-"`
@@ -29,9 +30,10 @@ type Config struct {
 }
 
 const (
-	defaultScanWorkers = 16
-	maxScanWorkers     = 256
-	defaultRoomID      = "public"
+	defaultScanWorkers   = 16
+	maxScanWorkers       = 256
+	defaultRoomID        = "main"
+	currentConfigVersion = 1
 )
 
 var roomIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
@@ -94,6 +96,7 @@ func LoadConfig(path string) (Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse %s: %w", path, err)
 	}
+	migrated := migrateConfig(&cfg)
 	if err := cfg.ApplyDefaultsForRoot(filepath.Dir(path)); err != nil {
 		return Config{}, err
 	}
@@ -103,7 +106,26 @@ func LoadConfig(path string) (Config, error) {
 	if err := cfg.EnsureMusicDirs(); err != nil {
 		return Config{}, err
 	}
+	if migrated {
+		if err := SaveConfig(path, cfg); err != nil {
+			return Config{}, fmt.Errorf("save migrated config: %w", err)
+		}
+	}
 	return cfg, nil
+}
+
+func migrateConfig(cfg *Config) bool {
+	if cfg == nil || cfg.Version >= currentConfigVersion {
+		return false
+	}
+	if len(cfg.Rooms) > 0 {
+		if cfg.Rooms[0].Grants == nil {
+			cfg.Rooms[0].Grants = make(map[string][]RoomPermission)
+		}
+		cfg.Rooms[0].Grants[EveryoneRoomGrant] = append([]RoomPermission(nil), roomPermissions...)
+	}
+	cfg.Version = currentConfigVersion
+	return true
 }
 
 func SaveConfig(path string, cfg Config) error {
@@ -163,12 +185,13 @@ func NewDefaultConfig() (Config, error) {
 
 func NewDefaultConfigForRoot(configDir string) Config {
 	return Config{
+		Version:      currentConfigVersion,
 		Addr:         "0.0.0.0:8080",
 		MusicDirs:    []string{filepath.Join(configDir, "music")},
 		DatabasePath: databasePath(configDir),
 		ScanWorkers:  defaultScanWorkers,
 		BannedIPs:    []string{},
-		Rooms:        []Room{{ID: defaultRoomID, Name: "Public Room", Public: true}},
+		Rooms:        []Room{{ID: defaultRoomID, Name: "Public Room", Grants: openRoomGrants()}},
 		Auth: AuthConfig{
 			PocketBase: appauth.DefaultConfig(configDir),
 		},
@@ -222,6 +245,9 @@ func (c *Config) ApplyDefaultsForRoot(configRoot string) error {
 	if c.Addr == "" {
 		c.Addr = "0.0.0.0:8080"
 	}
+	if c.Version <= 0 {
+		c.Version = currentConfigVersion
+	}
 	c.DatabasePath = databasePath(configRoot)
 	if c.ScanWorkers == 0 {
 		c.ScanWorkers = defaultScanWorkers
@@ -231,7 +257,7 @@ func (c *Config) ApplyDefaultsForRoot(configRoot string) error {
 		c.BannedIPs = []string{}
 	}
 	if len(c.Rooms) == 0 {
-		c.Rooms = []Room{{ID: defaultRoomID, Name: "Public Room", Public: true}}
+		c.Rooms = []Room{{ID: defaultRoomID, Name: "Public Room", Grants: openRoomGrants()}}
 	}
 	for i := range c.Rooms {
 		c.Rooms[i].ID = strings.TrimSpace(c.Rooms[i].ID)
@@ -242,8 +268,7 @@ func (c *Config) ApplyDefaultsForRoot(configRoot string) error {
 		if c.Rooms[i].Name == "" {
 			c.Rooms[i].Name = c.Rooms[i].ID
 		}
-		c.Rooms[i].AllowedRoles = normalizeConfigList(c.Rooms[i].AllowedRoles)
-		c.Rooms[i].AllowedGroups = normalizeConfigList(c.Rooms[i].AllowedGroups)
+		c.Rooms[i].Grants = normalizeRoomGrants(c.Rooms[i].Grants)
 	}
 	c.Auth.PocketBase.DataDir = appauth.DataDir(configRoot)
 	c.Auth.PocketBase.BootstrapAdminEmail = appauth.DefaultBootstrapAdminEmail()
@@ -259,7 +284,6 @@ func validateRooms(rooms []Room) error {
 		return errors.New("rooms must contain at least one room")
 	}
 	seen := make(map[string]struct{}, len(rooms))
-	hasPublic := false
 	reserved := []string{"admin", "api", "assets", "authAdmin", "events", "healthz", "login", "logout", "media", "rooms"}
 	for _, room := range rooms {
 		if !roomIDPattern.MatchString(room.ID) {
@@ -275,24 +299,41 @@ func validateRooms(rooms []Room) error {
 		if room.Name == "" {
 			return fmt.Errorf("room %q name is required", room.ID)
 		}
-		if room.Public {
-			hasPublic = true
-		}
-		for _, role := range room.AllowedRoles {
-			if role != string(appauth.RoleListener) && role != string(appauth.RoleAdmin) {
-				return fmt.Errorf("room %q allowed role %q must be listener or admin", room.ID, role)
-			}
-		}
-		for _, group := range room.AllowedGroups {
+		for group, permissions := range room.Grants {
 			if group == "" {
-				return fmt.Errorf("room %q allowed_groups must not contain empty values", room.ID)
+				return fmt.Errorf("room %q grants must not contain an empty group", room.ID)
+			}
+			if len(permissions) == 0 {
+				return fmt.Errorf("room %q group %q must have at least one permission", room.ID, group)
+			}
+			for _, permission := range permissions {
+				if !slices.Contains(roomPermissions, permission) {
+					return fmt.Errorf("room %q group %q has unknown permission %q", room.ID, group, permission)
+				}
 			}
 		}
-	}
-	if !hasPublic {
-		return errors.New("rooms must contain at least one public room")
 	}
 	return nil
+}
+
+func normalizeRoomGrants(grants map[string][]RoomPermission) map[string][]RoomPermission {
+	if len(grants) == 0 {
+		return nil
+	}
+	normalized := make(map[string][]RoomPermission, len(grants))
+	for group, permissions := range grants {
+		group = strings.TrimSpace(group)
+		for _, permission := range permissions {
+			permission = RoomPermission(strings.TrimSpace(string(permission)))
+			if permission != "" && !slices.Contains(normalized[group], permission) {
+				normalized[group] = append(normalized[group], permission)
+			}
+		}
+		if _, ok := normalized[group]; !ok {
+			normalized[group] = nil
+		}
+	}
+	return normalized
 }
 
 func normalizeConfigList(values []string) []string {

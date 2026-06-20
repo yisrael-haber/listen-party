@@ -38,7 +38,6 @@ type Playlist struct {
 	ID        int64          `json:"id"`
 	Name      string         `json:"name"`
 	OwnerID   string         `json:"owner_id"`
-	Public    bool           `json:"public"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	Items     []PlaylistItem `json:"items,omitempty"`
@@ -53,7 +52,6 @@ type PlaylistItem struct {
 	Title      string `json:"title"`
 	Artist     string `json:"artist"`
 	Album      string `json:"album"`
-	TrackID    int64  `json:"track_id,omitempty"`
 }
 
 type Media struct {
@@ -114,8 +112,9 @@ type ScanStatus struct {
 }
 
 var (
-	ErrTrackNotFound  = errors.New("track not found")
-	ErrScanInProgress = errors.New("library scan already in progress")
+	ErrTrackNotFound    = errors.New("track not found")
+	ErrPlaylistNotFound = errors.New("playlist not found")
+	ErrScanInProgress   = errors.New("library scan already in progress")
 )
 
 const (
@@ -229,7 +228,6 @@ CREATE TABLE IF NOT EXISTS playlists (
 	id INTEGER PRIMARY KEY,
 	name TEXT NOT NULL,
 	owner_id TEXT NOT NULL,
-	public INTEGER NOT NULL DEFAULT 0,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
 );
@@ -719,6 +717,24 @@ func (l *Library) ListByIDs(ctx context.Context, ids []int64) (map[int64]Track, 
 	return out, nil
 }
 
+func (l *Library) ListByDedupeKeys(ctx context.Context, keys []string) (map[string]Track, error) {
+	out := make(map[string]Track, len(keys))
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		track, err := l.ResolveDedupeKey(ctx, key)
+		if err != nil {
+			if errors.Is(err, ErrTrackNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		out[key] = track
+	}
+	return out, nil
+}
+
 func (l *Library) OpenMedia(ctx context.Context, id int64) (*Media, error) {
 	track, err := l.get(ctx, id, false)
 	if err != nil {
@@ -757,13 +773,13 @@ func (l *Library) Artwork(ctx context.Context, id int64) ([]byte, string, error)
 	return picture.Data, mimeType, nil
 }
 
-func (l *Library) CreatePlaylist(ctx context.Context, name, ownerID string, public bool) (Playlist, error) {
+func (l *Library) CreatePlaylist(ctx context.Context, name, ownerID string) (Playlist, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Playlist{}, errors.New("playlist name is required")
 	}
 	now := time.Now()
-	res, err := l.db.ExecContext(ctx, `INSERT INTO playlists(name, owner_id, public, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`, name, ownerID, boolInt(public), now.Unix(), now.Unix())
+	res, err := l.db.ExecContext(ctx, `INSERT INTO playlists(name, owner_id, created_at, updated_at) VALUES(?, ?, ?, ?)`, name, ownerID, now.Unix(), now.Unix())
 	if err != nil {
 		return Playlist{}, err
 	}
@@ -771,11 +787,11 @@ func (l *Library) CreatePlaylist(ctx context.Context, name, ownerID string, publ
 	if err != nil {
 		return Playlist{}, err
 	}
-	return Playlist{ID: id, Name: name, OwnerID: ownerID, Public: public, CreatedAt: now, UpdatedAt: now}, nil
+	return Playlist{ID: id, Name: name, OwnerID: ownerID, CreatedAt: now, UpdatedAt: now}, nil
 }
 
 func (l *Library) ListPlaylists(ctx context.Context) ([]Playlist, error) {
-	rows, err := l.db.QueryContext(ctx, `SELECT id, name, owner_id, public, created_at, updated_at FROM playlists ORDER BY name COLLATE NOCASE ASC, id ASC`)
+	rows, err := l.db.QueryContext(ctx, `SELECT id, name, owner_id, created_at, updated_at FROM playlists ORDER BY name COLLATE NOCASE ASC, id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -792,10 +808,10 @@ func (l *Library) ListPlaylists(ctx context.Context) ([]Playlist, error) {
 }
 
 func (l *Library) GetPlaylist(ctx context.Context, id int64) (Playlist, error) {
-	row := l.db.QueryRowContext(ctx, `SELECT id, name, owner_id, public, created_at, updated_at FROM playlists WHERE id = ?`, id)
+	row := l.db.QueryRowContext(ctx, `SELECT id, name, owner_id, created_at, updated_at FROM playlists WHERE id = ?`, id)
 	p, err := scanPlaylist(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Playlist{}, ErrTrackNotFound
+		return Playlist{}, ErrPlaylistNotFound
 	}
 	if err != nil {
 		return Playlist{}, err
@@ -806,21 +822,6 @@ func (l *Library) GetPlaylist(ctx context.Context, id int64) (Playlist, error) {
 	}
 	p.Items = items
 	return p, nil
-}
-
-func (l *Library) UpdatePlaylistVisibility(ctx context.Context, id int64, public bool) (Playlist, error) {
-	res, err := l.db.ExecContext(ctx, `UPDATE playlists SET public = ?, updated_at = ? WHERE id = ?`, boolInt(public), time.Now().Unix(), id)
-	if err != nil {
-		return Playlist{}, err
-	}
-	updated, err := res.RowsAffected()
-	if err != nil {
-		return Playlist{}, err
-	}
-	if updated == 0 {
-		return Playlist{}, ErrTrackNotFound
-	}
-	return l.GetPlaylist(ctx, id)
 }
 
 func (l *Library) PlaylistItems(ctx context.Context, playlistID int64) ([]PlaylistItem, error) {
@@ -840,8 +841,8 @@ func (l *Library) PlaylistItems(ctx context.Context, playlistID int64) ([]Playli
 	return items, rows.Err()
 }
 
-func (l *Library) AddPlaylistTrack(ctx context.Context, playlistID, trackID int64) (PlaylistItem, error) {
-	track, err := l.get(ctx, trackID, false)
+func (l *Library) AddPlaylistTrack(ctx context.Context, playlistID int64, dedupeKey string) (PlaylistItem, error) {
+	track, err := l.ResolveDedupeKey(ctx, dedupeKey)
 	if err != nil {
 		return PlaylistItem{}, err
 	}
@@ -858,12 +859,35 @@ func (l *Library) AddPlaylistTrack(ctx context.Context, playlistID, trackID int6
 	if err != nil {
 		return PlaylistItem{}, err
 	}
-	return PlaylistItem{ID: id, PlaylistID: playlistID, Position: position, DedupeKey: track.DedupeKey, MatchKey: track.MatchKey, Title: track.Title, Artist: track.Artist, Album: track.Album, TrackID: track.ID}, nil
+	return PlaylistItem{ID: id, PlaylistID: playlistID, Position: position, DedupeKey: track.DedupeKey, MatchKey: track.MatchKey, Title: track.Title, Artist: track.Artist, Album: track.Album}, nil
 }
 
 func (l *Library) RemovePlaylistItem(ctx context.Context, playlistID, itemID int64) error {
 	_, err := l.db.ExecContext(ctx, `DELETE FROM playlist_items WHERE playlist_id = ? AND id = ?`, playlistID, itemID)
 	return err
+}
+
+func (l *Library) DeletePlaylist(ctx context.Context, playlistID int64) error {
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM playlist_items WHERE playlist_id = ?`, playlistID); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM playlists WHERE id = ?`, playlistID)
+	if err != nil {
+		return err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if deleted == 0 {
+		return ErrPlaylistNotFound
+	}
+	return tx.Commit()
 }
 
 func (l *Library) ResolvePlaylistTracks(ctx context.Context, playlistID int64) ([]Track, error) {
@@ -896,12 +920,10 @@ func (l *Library) ResolveDedupeKey(ctx context.Context, key string) (Track, erro
 
 func scanPlaylist(row rowScanner) (Playlist, error) {
 	var p Playlist
-	var public int
 	var created, updated int64
-	if err := row.Scan(&p.ID, &p.Name, &p.OwnerID, &public, &created, &updated); err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &p.OwnerID, &created, &updated); err != nil {
 		return Playlist{}, err
 	}
-	p.Public = public == 1
 	p.CreatedAt = time.Unix(created, 0)
 	p.UpdatedAt = time.Unix(updated, 0)
 	return p, nil
@@ -913,13 +935,6 @@ func scanPlaylistItem(row rowScanner) (PlaylistItem, error) {
 		return PlaylistItem{}, err
 	}
 	return item, nil
-}
-
-func boolInt(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
 }
 
 type rowScanner interface {

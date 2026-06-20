@@ -35,29 +35,29 @@ func (s *Server) Handler() http.Handler {
 	requireAdmin := s.Auth.Require(RoleAdmin)
 	mux.Handle("GET /admin", requireAdmin(http.HandlerFunc(s.handleAdminPage)))
 	mux.Handle("GET /admin.js", requireAdmin(http.HandlerFunc(s.handleAdminJS)))
-	requireListener := s.Auth.Require(RoleListener, RoleAdmin)
+	requireUser := s.Auth.Require()
 	webFiles := http.FileServer(http.FS(webRoot()))
-	mux.Handle("GET /{$}", requireListener(http.HandlerFunc(s.handleApp)))
-	mux.Handle("GET /rooms/{room}", requireListener(http.HandlerFunc(s.handleApp)))
-	mux.Handle("GET /assets/", requireListener(http.StripPrefix("/assets/", webFiles)))
-	mux.Handle("GET /rooms/{room}/events", requireListener(http.HandlerFunc(s.handleEvents)))
-	mux.Handle("GET /api/session", requireListener(http.HandlerFunc(s.handleSession)))
-	mux.Handle("GET /rooms/{room}/api/state", requireListener(http.HandlerFunc(s.handleState)))
-	mux.Handle("GET /api/search", requireListener(http.HandlerFunc(s.handleSearch)))
-	mux.Handle("GET /api/library", requireListener(http.HandlerFunc(s.handleLibrary)))
-	mux.Handle("GET /api/playlists", requireListener(http.HandlerFunc(s.handlePlaylists)))
-	mux.Handle("POST /api/playlists", requireListener(http.HandlerFunc(s.handlePlaylistCreate)))
-	mux.Handle("GET /api/playlists/{id}", requireListener(http.HandlerFunc(s.handlePlaylist)))
-	mux.Handle("PATCH /api/playlists/{id}", requireListener(http.HandlerFunc(s.handlePlaylistUpdate)))
-	mux.Handle("POST /api/playlists/{id}/items", requireListener(http.HandlerFunc(s.handlePlaylistAddItem)))
-	mux.Handle("DELETE /api/playlists/{id}/items/{item}", requireListener(http.HandlerFunc(s.handlePlaylistRemoveItem)))
-	mux.Handle("POST /rooms/{room}/api/command", requireListener(http.HandlerFunc(s.handleCommand)))
+	mux.Handle("GET /{$}", requireUser(http.HandlerFunc(s.handleApp)))
+	mux.Handle("GET /rooms/{room}", requireUser(http.HandlerFunc(s.handleApp)))
+	mux.Handle("GET /assets/", requireUser(http.StripPrefix("/assets/", webFiles)))
+	mux.Handle("GET /rooms/{room}/events", requireUser(http.HandlerFunc(s.handleEvents)))
+	mux.Handle("GET /api/session", requireUser(http.HandlerFunc(s.handleSession)))
+	mux.Handle("GET /rooms/{room}/api/state", requireUser(http.HandlerFunc(s.handleState)))
+	mux.Handle("GET /api/search", requireUser(http.HandlerFunc(s.handleSearch)))
+	mux.Handle("GET /api/library", requireUser(http.HandlerFunc(s.handleLibrary)))
+	mux.Handle("GET /api/playlists", requireUser(http.HandlerFunc(s.handlePlaylists)))
+	mux.Handle("POST /api/playlists", requireUser(http.HandlerFunc(s.handlePlaylistCreate)))
+	mux.Handle("GET /api/playlists/{id}", requireUser(http.HandlerFunc(s.handlePlaylist)))
+	mux.Handle("DELETE /api/playlists/{id}", requireUser(http.HandlerFunc(s.handlePlaylistDelete)))
+	mux.Handle("POST /api/playlists/{id}/items", requireUser(http.HandlerFunc(s.handlePlaylistAddItem)))
+	mux.Handle("DELETE /api/playlists/{id}/items/{item}", requireUser(http.HandlerFunc(s.handlePlaylistRemoveItem)))
+	mux.Handle("POST /rooms/{room}/api/command", requireUser(http.HandlerFunc(s.handleCommand)))
 	mux.Handle("POST /api/admin/rescan", requireAdmin(http.HandlerFunc(s.handleRescan)))
 	mux.Handle("POST /api/admin/rescan-dir", requireAdmin(http.HandlerFunc(s.handleRescanDir)))
 	mux.Handle("GET /api/admin/config", requireAdmin(http.HandlerFunc(s.handleConfig)))
 	mux.Handle("PUT /api/admin/config", requireAdmin(http.HandlerFunc(s.handleConfigUpdate)))
-	mux.Handle("GET /media/{id}/artwork", requireListener(http.HandlerFunc(s.handleArtwork)))
-	mux.Handle("GET /media/{id}", requireListener(http.HandlerFunc(s.handleMedia)))
+	mux.Handle("GET /media/{id}/artwork", requireUser(http.HandlerFunc(s.handleArtwork)))
+	mux.Handle("GET /media/{id}", requireUser(http.HandlerFunc(s.handleMedia)))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -153,15 +153,20 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rooms := s.Rooms.List()
-	visible := make([]Room, 0, len(rooms))
+	type roomSummary struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	summaries := make([]roomSummary, 0, len(rooms))
+	permissions := make(map[string][]RoomPermission, len(rooms))
 	for _, room := range rooms {
-		if UserCanAccessRoom(user, room) {
-			visible = append(visible, room)
-		}
+		summaries = append(summaries, roomSummary{ID: room.ID, Name: room.Name})
+		permissions[room.ID] = RoomPermissionsForUser(user, room)
 	}
 	writeJSON(w, map[string]any{
 		"default_room_id": s.Rooms.DefaultID(),
-		"rooms":           visible,
+		"rooms":           summaries,
+		"permissions":     permissions,
 		"user":            user,
 	})
 }
@@ -179,10 +184,6 @@ func (s *Server) roomFromRequest(w http.ResponseWriter, r *http.Request) (*Room,
 	user, ok := s.Auth.CurrentUser(r)
 	if !ok {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
-		return nil, UserInfo{}, false
-	}
-	if !UserCanAccessRoom(user, *room) {
-		http.Error(w, "room access denied", http.StatusForbidden)
 		return nil, UserInfo{}, false
 	}
 	return room, user, true
@@ -243,10 +244,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeEvent(w http.ResponseWriter, r *http.Request, state PlaybackState) bool {
-	payload, err := s.viewState(r.Context(), state)
+	payload, err := s.viewStateForRequest(r, state)
 	if err != nil {
 		slog.Warn("build sse state", "error", err)
-		return true
+		return false
 	}
 	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		slog.Debug("set sse write deadline", "error", err)
@@ -268,7 +269,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	state, err := s.viewState(r.Context(), s.roomSnapshot(r.Context(), room))
+	state, err := s.viewStateForRequest(r, s.roomSnapshot(r.Context(), room))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -281,17 +282,19 @@ func (s *Server) roomSnapshot(ctx context.Context, room *Room) PlaybackState {
 	if !s.playbackExpired(ctx, state) {
 		return state
 	}
-	slog.Info("auto advancing expired playback", "room", room.ID, "track_id", state.Current.TrackID)
-	return room.Playback.Ended(state.Current.TrackID)
+	slog.Info("auto advancing expired playback", "room", room.ID, "dedupe_key", state.Current.DedupeKey)
+	return room.Playback.Ended(state.Current.DedupeKey)
 }
 
 func (s *Server) playbackExpired(ctx context.Context, state PlaybackState) bool {
-	if s.Library == nil || state.Current.TrackID == 0 || state.Paused || state.StartedAt.IsZero() {
+	if s.Library == nil || state.Current.DedupeKey == "" || state.Paused || state.StartedAt.IsZero() {
 		return false
 	}
-	track, err := s.Library.GetCached(ctx, state.Current.TrackID)
+	track, err := s.Library.ResolveDedupeKey(ctx, state.Current.DedupeKey)
 	if err != nil || track.DurationMS <= 0 {
-		s.Library.EnsureDuration(state.Current.TrackID)
+		if err == nil {
+			s.Library.EnsureDuration(track.ID)
+		}
 		return false
 	}
 	return time.Since(state.StartedAt).Milliseconds() > track.DurationMS+1500
@@ -322,7 +325,6 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 type playlistView struct {
 	musiclib.Playlist
 	CanEdit bool `json:"can_edit"`
-	CanRun  bool `json:"can_run"`
 }
 
 func (s *Server) handlePlaylists(w http.ResponseWriter, r *http.Request) {
@@ -338,9 +340,6 @@ func (s *Server) handlePlaylists(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]playlistView, 0, len(playlists))
 	for _, playlist := range playlists {
-		if !userCanViewPlaylist(user, playlist) {
-			continue
-		}
 		out = append(out, s.playlistView(user, playlist))
 	}
 	writeJSON(w, out)
@@ -361,10 +360,6 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if !userCanViewPlaylist(user, playlist) {
-		http.Error(w, "playlist access denied", http.StatusForbidden)
-		return
-	}
 	writeJSON(w, s.playlistView(user, playlist))
 }
 
@@ -375,48 +370,14 @@ func (s *Server) handlePlaylistCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name   string `json:"name"`
-		Public bool   `json:"public"`
+		Name string `json:"name"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	playlist, err := s.Library.CreatePlaylist(r.Context(), req.Name, user.ID, req.Public)
+	playlist, err := s.Library.CreatePlaylist(r.Context(), req.Name, user.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	writeJSON(w, s.playlistView(user, playlist))
-}
-
-func (s *Server) handlePlaylistUpdate(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.Auth.CurrentUser(r)
-	if !ok {
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-		return
-	}
-	id, ok := pathID(w, r, "id")
-	if !ok {
-		return
-	}
-	playlist, err := s.Library.GetPlaylist(r.Context(), id)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if !userCanEditPlaylist(user, playlist) {
-		http.Error(w, "playlist edit denied", http.StatusForbidden)
-		return
-	}
-	var req struct {
-		Public bool `json:"public"`
-	}
-	if !readJSON(w, r, &req) {
-		return
-	}
-	playlist, err = s.Library.UpdatePlaylistVisibility(r.Context(), id, req.Public)
-	if err != nil {
-		writeError(w, err)
 		return
 	}
 	writeJSON(w, s.playlistView(user, playlist))
@@ -442,16 +403,16 @@ func (s *Server) handlePlaylistAddItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		TrackID int64 `json:"track_id"`
+		DedupeKey string `json:"dedupe_key"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	if req.TrackID <= 0 {
-		http.Error(w, "track_id is required", http.StatusBadRequest)
+	if req.DedupeKey == "" {
+		http.Error(w, "dedupe_key is required", http.StatusBadRequest)
 		return
 	}
-	if _, err := s.Library.AddPlaylistTrack(r.Context(), id, req.TrackID); err != nil {
+	if _, err := s.Library.AddPlaylistTrack(r.Context(), id, req.DedupeKey); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -498,16 +459,37 @@ func (s *Server) handlePlaylistRemoveItem(w http.ResponseWriter, r *http.Request
 	writeJSON(w, s.playlistView(user, playlist))
 }
 
+func (s *Server) handlePlaylistDelete(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.Auth.CurrentUser(r)
+	if !ok {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	playlist, err := s.Library.GetPlaylist(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if !userCanEditPlaylist(user, playlist) {
+		http.Error(w, "playlist edit denied", http.StatusForbidden)
+		return
+	}
+	if err := s.Library.DeletePlaylist(r.Context(), id); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) playlistView(user UserInfo, playlist musiclib.Playlist) playlistView {
 	return playlistView{
 		Playlist: playlist,
 		CanEdit:  userCanEditPlaylist(user, playlist),
-		CanRun:   userCanViewPlaylist(user, playlist),
 	}
-}
-
-func userCanViewPlaylist(user UserInfo, playlist musiclib.Playlist) bool {
-	return user.Role == RoleAdmin || playlist.Public || playlist.OwnerID == user.ID
 }
 
 func userCanEditPlaylist(user UserInfo, playlist musiclib.Playlist) bool {
@@ -567,48 +549,57 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Action     string `json:"action"`
-		TrackID    int64  `json:"track_id"`
-		PlaylistID int64  `json:"playlist_id"`
-		ID         int64  `json:"id"`
-		Direction  int    `json:"direction"`
-		PositionMS int64  `json:"position_ms"`
+		Action            string `json:"action"`
+		DedupeKey         string `json:"dedupe_key"`
+		PlaylistID        int64  `json:"playlist_id"`
+		QueueItemID       int64  `json:"queue_item_id"`
+		BeforeQueueItemID int64  `json:"before_queue_item_id"`
+		PositionMS        int64  `json:"position_ms"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
+	permission, known := permissionForAction(req.Action)
+	if !known {
+		http.Error(w, "unknown action", http.StatusBadRequest)
+		return
+	}
+	if !s.Rooms.UserHasPermission(room.ID, user, permission) {
+		http.Error(w, "room permission denied", http.StatusForbidden)
+		return
+	}
 	switch req.Action {
 	case "queue_add":
-		if req.TrackID <= 0 {
-			http.Error(w, "track_id is required", http.StatusBadRequest)
+		if req.DedupeKey == "" {
+			http.Error(w, "dedupe_key is required", http.StatusBadRequest)
 			return
 		}
-		s.writeCommandState(w, r, "queue_add", room, user.Username, room.Playback.Add(req.TrackID, user.Username))
+		if _, err := s.Library.ResolveDedupeKey(r.Context(), req.DedupeKey); err != nil {
+			writeError(w, err)
+			return
+		}
+		s.writeCommandState(w, r, "queue_add", room, user.Username, room.Playback.Add(req.DedupeKey, user.Username))
 	case "queue_remove":
-		if !requireID(w, req.ID) {
+		if req.QueueItemID <= 0 {
+			http.Error(w, "queue_item_id is required", http.StatusBadRequest)
 			return
 		}
-		s.writeCommandState(w, r, "queue_remove", room, user.Username, room.Playback.Remove(req.ID))
-	case "queue_move":
-		if !requireID(w, req.ID) {
+		s.writeCommandState(w, r, "queue_remove", room, user.Username, room.Playback.Remove(req.QueueItemID))
+	case "queue_reorder":
+		if req.QueueItemID <= 0 {
+			http.Error(w, "queue_item_id is required", http.StatusBadRequest)
 			return
 		}
-		if req.Direction == 0 {
-			http.Error(w, "direction is required", http.StatusBadRequest)
+		if req.BeforeQueueItemID < 0 {
+			http.Error(w, "before_queue_item_id must not be negative", http.StatusBadRequest)
 			return
 		}
-		event := "queue_move_down"
-		delta := 1
-		if req.Direction < 0 {
-			event = "queue_move_up"
-			delta = -1
-		}
-		s.writeCommandState(w, r, event, room, user.Username, room.Playback.Move(req.ID, delta))
-	case "queue_next":
-		if !requireID(w, req.ID) {
+		state, err := room.Playback.Reorder(req.QueueItemID, req.BeforeQueueItemID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
-		s.writeCommandState(w, r, "queue_next", room, user.Username, room.Playback.MoveToNext(req.ID))
+		s.writeCommandState(w, r, "queue_reorder", room, user.Username, state)
 	case "queue_clear":
 		s.writeCommandState(w, r, "queue_clear", room, user.Username, room.Playback.Clear())
 	case "play":
@@ -620,17 +611,21 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeCommandState(w, r, "play", room, user.Username, state)
 	case "play_now":
-		if req.TrackID <= 0 {
-			http.Error(w, "track_id is required", http.StatusBadRequest)
+		if req.DedupeKey == "" {
+			http.Error(w, "dedupe_key is required", http.StatusBadRequest)
 			return
 		}
-		s.writeCommandState(w, r, "play_now", room, user.Username, room.Playback.PlayNow(req.TrackID, user.Username))
+		if _, err := s.Library.ResolveDedupeKey(r.Context(), req.DedupeKey); err != nil {
+			writeError(w, err)
+			return
+		}
+		s.writeCommandState(w, r, "play_now", room, user.Username, room.Playback.PlayNow(req.DedupeKey, user.Username))
 	case "pause":
 		s.writeCommandState(w, r, "pause", room, user.Username, room.Playback.Pause())
 	case "previous":
 		s.writeCommandState(w, r, "previous", room, user.Username, room.Playback.Previous())
 	case "seek":
-		s.writeCommandState(w, r, "seek", room, user.Username, room.Playback.Seek(req.PositionMS))
+		s.writeCommandState(w, r, "seek", room, user.Username, room.Playback.SeekTo(req.PositionMS))
 	case "skip":
 		s.writeCommandState(w, r, "skip", room, user.Username, room.Playback.Skip())
 	case "history_clear":
@@ -640,13 +635,8 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "playlist_id is required", http.StatusBadRequest)
 			return
 		}
-		playlist, err := s.Library.GetPlaylist(r.Context(), req.PlaylistID)
-		if err != nil {
+		if _, err := s.Library.GetPlaylist(r.Context(), req.PlaylistID); err != nil {
 			writeError(w, err)
-			return
-		}
-		if !userCanViewPlaylist(user, playlist) {
-			http.Error(w, "playlist access denied", http.StatusForbidden)
 			return
 		}
 		tracks, err := s.Library.ResolvePlaylistTracks(r.Context(), req.PlaylistID)
@@ -654,27 +644,30 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err)
 			return
 		}
-		ids := make([]int64, 0, len(tracks))
+		keys := make([]string, 0, len(tracks))
 		for _, track := range tracks {
-			ids = append(ids, track.ID)
+			keys = append(keys, track.DedupeKey)
 		}
 		if req.Action == "playlist_shuffle" {
-			rand.Shuffle(len(ids), func(i, j int) {
-				ids[i], ids[j] = ids[j], ids[i]
+			rand.Shuffle(len(keys), func(i, j int) {
+				keys[i], keys[j] = keys[j], keys[i]
 			})
 		}
-		s.writeCommandState(w, r, req.Action, room, user.Username, room.Playback.AddMany(ids, user.Username))
-	default:
-		http.Error(w, "unknown action", http.StatusBadRequest)
+		s.writeCommandState(w, r, req.Action, room, user.Username, room.Playback.AddMany(keys, user.Username))
 	}
 }
 
-func requireID(w http.ResponseWriter, id int64) bool {
-	if id <= 0 {
-		http.Error(w, "id is required", http.StatusBadRequest)
-		return false
+func permissionForAction(action string) (RoomPermission, bool) {
+	switch action {
+	case "queue_add", "playlist_queue", "playlist_shuffle":
+		return PermissionQueueAdd, true
+	case "queue_remove", "queue_reorder", "queue_clear", "history_clear":
+		return PermissionQueueManage, true
+	case "play", "play_now", "pause", "previous", "seek", "skip":
+		return PermissionPlaybackControl, true
+	default:
+		return "", false
 	}
-	return true
 }
 
 func pathID(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
@@ -793,7 +786,7 @@ func (s *Server) handleArtwork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeCommandState(w http.ResponseWriter, r *http.Request, event string, room *Room, username string, state PlaybackState) {
-	view, err := s.viewState(r.Context(), state)
+	view, err := s.viewStateForRequest(r, state)
 	if err != nil {
 		slog.Warn("build view state", "remote", r.RemoteAddr, "error", err)
 		writeError(w, err)
@@ -810,9 +803,10 @@ func (s *Server) writeCommandState(w http.ResponseWriter, r *http.Request, event
 
 type ViewState struct {
 	PlaybackState
-	Current *ViewItem  `json:"current"`
-	Queue   []ViewItem `json:"queue"`
-	History []ViewItem `json:"history"`
+	Current     *ViewItem        `json:"current"`
+	Queue       []ViewItem       `json:"queue"`
+	History     []ViewItem       `json:"history"`
+	Permissions []RoomPermission `json:"permissions"`
 }
 
 type ViewItem struct {
@@ -821,43 +815,60 @@ type ViewItem struct {
 }
 
 func (s *Server) viewState(ctx context.Context, state PlaybackState) (ViewState, error) {
-	ids := make([]int64, 0, len(state.Queue)+len(state.History)+1)
-	if state.Current.TrackID != 0 {
-		ids = append(ids, state.Current.TrackID)
+	keys := make([]string, 0, len(state.Queue)+len(state.History)+1)
+	if state.Current.DedupeKey != "" {
+		keys = append(keys, state.Current.DedupeKey)
 	}
 	for _, item := range state.Queue {
-		ids = append(ids, item.TrackID)
+		keys = append(keys, item.DedupeKey)
 	}
 	for _, item := range state.History {
-		ids = append(ids, item.TrackID)
+		keys = append(keys, item.DedupeKey)
 	}
-	tracks, err := s.Library.ListByIDs(ctx, ids)
+	tracks, err := s.Library.ListByDedupeKeys(ctx, keys)
 	if err != nil {
 		return ViewState{}, err
 	}
 	view := ViewState{PlaybackState: state}
 	view.Queue = make([]ViewItem, 0, len(state.Queue))
 	view.History = make([]ViewItem, 0, len(state.History))
-	if state.Current.TrackID != 0 {
+	if state.Current.DedupeKey != "" {
 		view.Current = &ViewItem{PlaybackItem: state.Current}
-		if track, ok := tracks[state.Current.TrackID]; ok {
+		if track, ok := tracks[state.Current.DedupeKey]; ok {
 			view.Current.Track = &track
 		}
 	}
 	for _, item := range state.Queue {
 		viewItem := ViewItem{PlaybackItem: item}
-		if track, ok := tracks[item.TrackID]; ok {
+		if track, ok := tracks[item.DedupeKey]; ok {
 			viewItem.Track = &track
 		}
 		view.Queue = append(view.Queue, viewItem)
 	}
 	for _, item := range state.History {
 		viewItem := ViewItem{PlaybackItem: item}
-		if track, ok := tracks[item.TrackID]; ok {
+		if track, ok := tracks[item.DedupeKey]; ok {
 			viewItem.Track = &track
 		}
 		view.History = append(view.History, viewItem)
 	}
+	return view, nil
+}
+
+func (s *Server) viewStateForRequest(r *http.Request, state PlaybackState) (ViewState, error) {
+	user, ok := s.Auth.CurrentUser(r)
+	if !ok {
+		return ViewState{}, errors.New("authentication required")
+	}
+	permissions, ok := s.Rooms.PermissionsForUser(state.RoomID, user)
+	if !ok {
+		return ViewState{}, errors.New("room not found")
+	}
+	view, err := s.viewState(r.Context(), state)
+	if err != nil {
+		return ViewState{}, err
+	}
+	view.Permissions = permissions
 	return view, nil
 }
 
@@ -877,5 +888,9 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	if errors.Is(err, musiclib.ErrTrackNotFound) || errors.Is(err, musiclib.ErrPlaylistNotFound) {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
 	http.Error(w, err.Error(), http.StatusInternalServerError)
 }

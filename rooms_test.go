@@ -1,20 +1,23 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestRoomManagerPreservesPlaybackForUnchangedRooms(t *testing.T) {
 	rooms := NewRoomManager([]Room{
-		{ID: "public", Name: "Public Room", Public: true},
+		{ID: "main", Name: "Main Room"},
 		{ID: "office", Name: "Office"},
 	})
 	office, ok := rooms.Get("office")
 	if !ok {
 		t.Fatal("office room missing")
 	}
-	office.Playback.Add(10, "alice")
+	office.Playback.Add("track-10", "alice")
 
 	rooms.Update([]Room{
-		{ID: "public", Name: "Public Room", Public: true},
+		{ID: "main", Name: "Main Room"},
 		{ID: "office", Name: "Office Renamed"},
 	})
 	office, ok = rooms.Get("office")
@@ -31,7 +34,7 @@ func TestRoomManagerPreservesPlaybackForUnchangedRooms(t *testing.T) {
 
 func TestRoomManagerClosesRemovedRoomSubscribers(t *testing.T) {
 	rooms := NewRoomManager([]Room{
-		{ID: "public", Name: "Public Room", Public: true},
+		{ID: "main", Name: "Main Room"},
 		{ID: "office", Name: "Office"},
 	})
 	office, ok := rooms.Get("office")
@@ -42,28 +45,82 @@ func TestRoomManagerClosesRemovedRoomSubscribers(t *testing.T) {
 	defer cancel()
 	<-ch
 
-	rooms.Update([]Room{{ID: "public", Name: "Public Room", Public: true}})
+	rooms.Update([]Room{{ID: "main", Name: "Main Room"}})
 
 	if _, ok := <-ch; ok {
 		t.Fatal("removed room subscription remained open")
 	}
 }
 
-func TestUserCanAccessRoom(t *testing.T) {
-	private := Room{ID: "office", Name: "Office", AllowedGroups: []string{"staff"}}
-	if UserCanAccessRoom(UserInfo{Role: RoleListener}, private) {
-		t.Fatal("listener without room or group accessed private room")
+func TestUserHasRoomPermission(t *testing.T) {
+	room := Room{ID: "office", Name: "Office", Grants: map[string][]RoomPermission{
+		"staff": {PermissionQueueManage},
+	}}
+	if UserHasRoomPermission(UserInfo{}, room, PermissionQueueManage) {
+		t.Fatal("user without a group received queue permission")
 	}
-	if !UserCanAccessRoom(UserInfo{Role: RoleListener, RoomIDs: []string{"office"}}, private) {
-		t.Fatal("listener with room id could not access private room")
+	if !UserHasRoomPermission(UserInfo{Groups: []string{"staff"}}, room, PermissionQueueManage) {
+		t.Fatal("staff user did not receive queue permission")
 	}
-	if !UserCanAccessRoom(UserInfo{Role: RoleListener, Groups: []string{"staff"}}, private) {
-		t.Fatal("listener with group could not access private room")
+	if UserHasRoomPermission(UserInfo{Groups: []string{"staff"}}, room, PermissionPlaybackControl) {
+		t.Fatal("queue permission implied playback permission")
 	}
-	if !UserCanAccessRoom(UserInfo{Role: RoleAdmin}, private) {
-		t.Fatal("admin could not access private room")
+	if UserHasRoomPermission(UserInfo{Groups: []string{"staff"}}, room, PermissionQueueAdd) {
+		t.Fatal("queue management implied queue addition")
 	}
-	if !UserCanAccessRoom(UserInfo{Role: RoleListener}, Room{ID: "public", Name: "Public", Public: true}) {
-		t.Fatal("listener could not access public room")
+	if !UserHasRoomPermission(UserInfo{Role: RoleAdmin}, room, PermissionPlaybackControl) {
+		t.Fatal("admin did not receive implicit permissions")
+	}
+	if !UserHasRoomPermission(UserInfo{Role: RoleAdmin}, room, PermissionQueueAdd) {
+		t.Fatal("admin did not receive implicit queue addition")
+	}
+}
+
+func TestEveryoneRoomGrantAppliesOnlyToAuthenticatedUsers(t *testing.T) {
+	room := Room{ID: "main", Name: "Public Room", Grants: openRoomGrants()}
+	if UserHasRoomPermission(UserInfo{}, room, PermissionQueueAdd) {
+		t.Fatal("anonymous identity received everyone permission")
+	}
+	user := UserInfo{ID: "user1", Username: "alice"}
+	for _, permission := range roomPermissions {
+		if !UserHasRoomPermission(user, room, permission) {
+			t.Fatalf("enabled user missing everyone permission %q", permission)
+		}
+	}
+}
+
+func TestRoomPermissionUpdatesApplyImmediately(t *testing.T) {
+	user := UserInfo{Groups: []string{"staff"}}
+	rooms := NewRoomManager([]Room{{
+		ID: "main", Name: "Main Room",
+		Grants: map[string][]RoomPermission{"staff": {PermissionQueueManage}},
+	}})
+	room, _ := rooms.Get("main")
+	if !UserHasRoomPermission(user, *room, PermissionQueueManage) {
+		t.Fatal("initial queue permission missing")
+	}
+
+	rooms.Update([]Room{{ID: "main", Name: "Main Room"}})
+	room, _ = rooms.Get("main")
+	if UserHasRoomPermission(user, *room, PermissionQueueManage) {
+		t.Fatal("removed queue permission remained effective")
+	}
+}
+
+func TestRoomUpdateNotifiesConnectedListeners(t *testing.T) {
+	rooms := NewRoomManager([]Room{{ID: "main", Name: "Main Room"}})
+	room, _ := rooms.Get("main")
+	updates, cancel := room.Playback.Subscribe(UserInfo{Username: "alice"})
+	defer cancel()
+	<-updates
+
+	rooms.Update([]Room{{
+		ID: "main", Name: "Main Room",
+		Grants: map[string][]RoomPermission{"staff": {PermissionQueueManage}},
+	}})
+	select {
+	case <-updates:
+	case <-time.After(time.Second):
+		t.Fatal("room update did not notify connected listener")
 	}
 }

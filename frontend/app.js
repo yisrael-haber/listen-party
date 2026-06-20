@@ -10,6 +10,7 @@ const listenerListEl = document.getElementById("listenerList");
 const clearQueueButton = document.getElementById("clearQueue");
 const clearHistoryButton = document.getElementById("clearHistory");
 const previousButton = document.getElementById("previous");
+const skipButton = document.getElementById("skip");
 const togglePlaybackButton = document.getElementById("togglePlayback");
 const artworkEl = document.getElementById("artwork");
 const seekInput = document.getElementById("seek");
@@ -25,15 +26,14 @@ const playlistsTab = document.getElementById("playlistsTab");
 const libraryViews = document.querySelectorAll(".library-view");
 const playlistsView = document.getElementById("playlistsView");
 const playlistSelect = document.getElementById("playlistSelect");
-const selectedPlaylistVisibility = document.getElementById("selectedPlaylistVisibility");
 const queuePlaylistButton = document.getElementById("queuePlaylist");
 const shufflePlaylistButton = document.getElementById("shufflePlaylist");
+const deletePlaylistButton = document.getElementById("deletePlaylist");
 const playlistDetailEl = document.getElementById("playlistDetail");
 const newPlaylistButton = document.getElementById("newPlaylist");
 const playlistCreatePanel = document.getElementById("playlistCreatePanel");
 const playlistCreateForm = document.getElementById("playlistCreateForm");
 const playlistNameInput = document.getElementById("playlistName");
-const playlistVisibility = document.getElementById("playlistVisibility");
 const currentUserEl = document.getElementById("currentUser");
 const roomSelect = document.getElementById("roomSelect");
 const logoutForm = document.getElementById("logoutForm");
@@ -43,6 +43,8 @@ const syncGuardMS = 1000;
 const searchDebounceMS = 300;
 const searchTextStorageKey = "listen-party.searchText";
 const searchFieldStorageKey = "listen-party.searchField";
+const railModeStorageKey = "listen-party.railMode";
+const playlistStorageKey = "listen-party.selectedPlaylist";
 
 let lastState = null;
 let lastStateReceivedAt = 0;
@@ -51,6 +53,11 @@ let seeking = false;
 let events = null;
 let playlists = [];
 let selectedPlaylistID = 0;
+let currentPermissions = new Set();
+let queueSortable = null;
+let queueDragActive = false;
+let queueReorderPending = false;
+let pendingQueueState = null;
 
 let currentRoomID = decodeURIComponent(location.pathname.match(/^\/rooms\/([^/]+)/)?.[1] || "");
 
@@ -82,6 +89,13 @@ function restoreSearchPreferences() {
   }
 }
 
+function restoreRailPreferences() {
+	const storedPlaylistID = Number(storageGet(playlistStorageKey));
+	selectedPlaylistID = Number.isInteger(storedPlaylistID) && storedPlaylistID > 0 ? storedPlaylistID : 0;
+	const mode = storageGet(railModeStorageKey) === "playlists" ? "playlists" : "library";
+	setRailMode(mode, {load: false, persist: false});
+}
+
 function closeEvents() {
   events?.close();
   events = null;
@@ -109,7 +123,7 @@ function syncCurrentAudio() {
 
 function trackTitle(track) {
   if (!track) return "";
-  return (track.title || `Track ${track.id || track.track_id || ""}`).trim();
+  return (track.title || `Track ${track.id || ""}`).trim();
 }
 
 function trackContext(track) {
@@ -142,7 +156,7 @@ function setSeekUI(position) {
   const max = duration > 0 ? duration : Math.max(position, 0);
   const value = Math.min(position, max);
   seekInput.max = String(Math.ceil(max));
-  seekInput.disabled = !hasMedia();
+  seekInput.disabled = !hasMedia() || !hasRoomPermission("playback_control");
   if (!seeking) {
     seekInput.value = String(value);
   }
@@ -206,6 +220,15 @@ function renderState(state) {
   if (lastState && Date.parse(state.server_time) < Date.parse(lastState.server_time)) {
     return;
   }
+  if (queueDragActive || queueReorderPending) {
+    if (!pendingQueueState || Date.parse(state.server_time) >= Date.parse(pendingQueueState.server_time)) {
+      pendingQueueState = state;
+    }
+    return;
+  }
+  if (Array.isArray(state.permissions)) {
+    currentPermissions = new Set(state.permissions);
+  }
 
   lastState = state;
   lastStateReceivedAt = Date.now();
@@ -231,11 +254,16 @@ function renderState(state) {
 
   queueEl.replaceChildren(...queue.map(renderQueueItem));
   renderHistory(history);
-  clearQueueButton.hidden = queue.length === 0;
-  clearHistoryButton.hidden = history.length === 0;
+  const canManageQueue = hasRoomPermission("queue_manage");
+  const canControlPlayback = hasRoomPermission("playback_control");
+  clearQueueButton.hidden = !canManageQueue || queue.length === 0;
+  clearHistoryButton.hidden = !canManageQueue || history.length === 0;
   renderPresence(state);
-  previousButton.disabled = history.length === 0;
-  togglePlaybackButton.disabled = !currentTrack && queue.length === 0;
+  previousButton.disabled = !canControlPlayback || history.length === 0;
+  skipButton.disabled = !canControlPlayback;
+  togglePlaybackButton.disabled = !canControlPlayback || (!currentTrack && queue.length === 0);
+  refreshPermissionControls();
+  updateQueueSortable();
   renderPlaybackButton(Boolean(currentTrack && !state.paused));
 }
 
@@ -260,34 +288,71 @@ function renderPresence(state) {
 function renderQueueItem(item) {
   const li = document.createElement("li");
   li.className = "queue-item";
+  li.dataset.queueItemId = String(item.id);
 
   const track = item.track;
   const meta = trackMeta(
-    track ? trackTitle(track) : `Track ${item.track_id}`,
+    track ? trackTitle(track) : "Unavailable track",
     track ? trackSubtitle(track) : "",
     item.requested_by
   );
 
-  const actions = document.createElement("div");
-  actions.className = "row-actions";
-  actions.append(
-    commandButton("Next", {action: "queue_next", id: item.id}),
-    commandButton("Up", {action: "queue_move", id: item.id, direction: -1}),
-    commandButton("Down", {action: "queue_move", id: item.id, direction: 1}),
-    commandButton("Remove", {action: "queue_remove", id: item.id})
-  );
+  const actions = trackActionGroup([], item.dedupe_key, [
+    commandTrashButton("Remove from queue", {action: "queue_remove", queue_item_id: item.id}),
+  ]);
 
-  li.append(meta, actions);
+	if (hasRoomPermission("queue_manage")) {
+		li.classList.add("queue-item-draggable");
+		li.append(queueDragHandle(item), meta, actions);
+	} else {
+		li.append(meta, actions);
+	}
   return li;
+}
+
+function queueDragHandle(item) {
+	const handle = document.createElement("button");
+	handle.className = "queue-drag-handle";
+	handle.type = "button";
+	handle.title = "Drag to reorder";
+	handle.setAttribute("aria-label", `Reorder ${item.track ? trackTitle(item.track) : "unavailable track"}`);
+	const icon = document.createElement("span");
+	icon.className = "queue-drag-icon";
+	icon.setAttribute("aria-hidden", "true");
+	handle.append(icon);
+	handle.addEventListener("keydown", (event) => {
+		handleQueueReorderKey(event, item.id);
+	});
+	return handle;
+}
+
+function handleQueueReorderKey(event, queueItemID) {
+	if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key) || queueReorderPending) return;
+	const item = event.currentTarget.closest(".queue-item");
+	if (!item) return;
+	let before = null;
+	if (event.key === "ArrowUp") {
+		before = item.previousElementSibling;
+		if (!before) return;
+	} else if (event.key === "ArrowDown") {
+		const next = item.nextElementSibling;
+		if (!next) return;
+		before = next.nextElementSibling;
+	} else if (event.key === "Home") {
+		before = queueEl.firstElementChild;
+		if (before === item) return;
+	}
+	event.preventDefault();
+	const beforeQueueItemID = before ? Number(before.dataset.queueItemId) : 0;
+	submitQueueReorder(queueItemID, beforeQueueItemID).then(() => {
+		queueEl.querySelector(`[data-queue-item-id="${queueItemID}"] .queue-drag-handle`)?.focus();
+	});
 }
 
 function renderHistoryItem(item) {
 	const track = item.track;
-	const trackID = item.track_id;
-	return trackRow(track || {id: item.track_id, title: `Track ${item.track_id}`}, [
-		["Queue", {action: "queue_add", track_id: trackID}],
-		["Play", {action: "play_now", track_id: trackID}],
-	], item.requested_by, trackID);
+	const dedupeKey = item.dedupe_key;
+	return trackRow(track || {title: "Unavailable track", dedupe_key: dedupeKey}, standardTrackCommands(dedupeKey), item.requested_by, dedupeKey);
 }
 
 function renderHistory(history) {
@@ -305,10 +370,66 @@ function commandButton(text, body) {
   const button = document.createElement("button");
   button.className = "secondary compact";
   button.textContent = text;
+  button.dataset.roomAction = body.action;
+  button.hidden = !canRunCommand(body.action);
   button.addEventListener("click", async () => {
     await command(body);
   });
   return button;
+}
+
+function commandTrashButton(label, body) {
+	const button = trashButton(label, async () => {
+		await command(body);
+	});
+	button.dataset.roomAction = body.action;
+	button.hidden = !canRunCommand(body.action);
+	return button;
+}
+
+function trashButton(label, onClick) {
+	const button = document.createElement("button");
+	button.className = "secondary compact icon-only trash-button";
+	button.type = "button";
+	button.title = label;
+	button.setAttribute("aria-label", label);
+	button.append(document.createElement("span"));
+	button.addEventListener("click", onClick);
+	return button;
+}
+
+function refreshPermissionControls() {
+  document.querySelectorAll("[data-room-action]").forEach((button) => {
+    button.hidden = !canRunCommand(button.dataset.roomAction);
+  });
+  document.querySelectorAll(".item .row-actions, .queue-item .row-actions").forEach(updateRowActionLayout);
+  updatePlaylistActionButtons();
+}
+
+function updateRowActionLayout(actions) {
+  const visibleRoomActions = [...actions.querySelectorAll("[data-room-action]")].filter((button) => !button.hidden);
+  const hasRoomActions = visibleRoomActions.length > 0;
+  const hasPlaylistAction = Boolean(actions.querySelector(".playlist-more-button"));
+  const hasStandaloneAction = [...actions.children].some((element) => element.matches("button:not([data-room-action])") && !element.hidden);
+  actions.classList.toggle("playlist-only", !hasRoomActions && hasPlaylistAction);
+  actions.classList.toggle("no-actions", !hasRoomActions && !hasPlaylistAction && !hasStandaloneAction);
+  actions.classList.toggle("single-room-action", visibleRoomActions.length === 1);
+  actions.classList.toggle("has-standalone-action", hasStandaloneAction);
+  actions.classList.toggle("standalone-only", !hasRoomActions && !hasPlaylistAction && hasStandaloneAction);
+}
+
+function hasRoomPermission(permission) {
+  return currentPermissions.has(permission);
+}
+
+function canRunCommand(action) {
+  if (["play", "play_now", "pause", "previous", "seek", "skip"].includes(action)) {
+    return hasRoomPermission("playback_control");
+  }
+  if (["queue_add", "playlist_queue", "playlist_shuffle"].includes(action)) {
+    return hasRoomPermission("queue_add");
+  }
+  return hasRoomPermission("queue_manage");
 }
 
 function trackMeta(titleText, subtitleText, requestedBy = "") {
@@ -327,30 +448,44 @@ function trackMeta(titleText, subtitleText, requestedBy = "") {
   return meta;
 }
 
-function trackRow(track, actions, requestedBy = "", trackID = track?.id || 0) {
+function standardTrackCommands(dedupeKey) {
+	if (!dedupeKey) return [];
+	return [
+		["Queue", {action: "queue_add", dedupe_key: dedupeKey}],
+		["Play", {action: "play_now", dedupe_key: dedupeKey}],
+	];
+}
+
+function trackActionGroup(commandSpecs, dedupeKey, extraButtons = []) {
+	const actions = document.createElement("div");
+	actions.className = "row-actions";
+	actions.append(...commandSpecs.map(([text, body]) => commandButton(text, body)));
+	if (dedupeKey) {
+		actions.append(addToPlaylistButton(dedupeKey));
+	}
+	actions.append(...extraButtons);
+	updateRowActionLayout(actions);
+	return actions;
+}
+
+function trackRow(track, commandSpecs, requestedBy = "", dedupeKey = track?.dedupe_key || "", extraButtons = []) {
 	const row = document.createElement("div");
 	row.className = "item";
 
 	const meta = trackMeta(trackTitle(track), trackSubtitle(track), requestedBy);
-
-	const actionEl = document.createElement("div");
-	actionEl.className = "row-actions";
-	actionEl.append(...actions.map(([text, body]) => commandButton(text, body)));
-	if (trackID > 0) {
-		actionEl.append(addToPlaylistButton(trackID));
-	}
+	const actionEl = trackActionGroup(commandSpecs, dedupeKey, extraButtons);
 
 	row.append(meta, actionEl);
 	return row;
 }
 
-function addToPlaylistButton(trackID) {
+function addToPlaylistButton(dedupeKey) {
 	const editable = playlists.filter((playlist) => playlist.can_edit);
 	if (editable.length === 0) {
 		const button = document.createElement("button");
 		button.className = "secondary compact playlist-more-button";
 		button.type = "button";
-		button.textContent = "+";
+		setPlaylistButtonContent(button);
 		button.setAttribute("aria-label", "Add to playlist");
 		button.disabled = true;
 		return button;
@@ -360,7 +495,7 @@ function addToPlaylistButton(trackID) {
 	const button = document.createElement("button");
 	button.className = "secondary compact playlist-more-button";
 	button.type = "button";
-	button.textContent = "+";
+	setPlaylistButtonContent(button);
 	button.setAttribute("aria-label", "Add to playlist");
 	button.setAttribute("aria-haspopup", "menu");
 	button.setAttribute("aria-expanded", "false");
@@ -377,7 +512,7 @@ function addToPlaylistButton(trackID) {
 			button.setAttribute("aria-expanded", "false");
 			await api(`/api/playlists/${playlist.id}/items`, {
 				method: "POST",
-				body: JSON.stringify({track_id: trackID}),
+				body: JSON.stringify({dedupe_key: dedupeKey}),
 			});
 			await loadPlaylists(playlist.id);
 		});
@@ -392,6 +527,16 @@ function addToPlaylistButton(trackID) {
 	});
 	wrap.append(button, menu);
 	return wrap;
+}
+
+function setPlaylistButtonContent(button) {
+	const icon = document.createElement("span");
+	icon.className = "playlist-add-icon";
+	icon.textContent = "+";
+	const label = document.createElement("span");
+	label.className = "playlist-add-label";
+	label.textContent = "Playlist";
+	button.replaceChildren(icon, label);
 }
 
 function closePlaylistAddMenus(except = null) {
@@ -424,6 +569,92 @@ function renderSubtitle(element, subtitleText, requestedBy = "") {
   requester.className = "requester";
   requester.textContent = requestedBy;
   element.append(requester);
+}
+
+function initQueueSortable() {
+	if (typeof Sortable === "undefined") {
+		throw new Error("embedded SortableJS asset did not load");
+	}
+	const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	queueSortable = Sortable.create(queueEl, {
+		animation: reduceMotion ? 0 : 160,
+		easing: "cubic-bezier(0.2, 0, 0, 1)",
+		handle: ".queue-drag-handle",
+		draggable: ".queue-item",
+		dataIdAttr: "data-queue-item-id",
+		ghostClass: "queue-sortable-ghost",
+		chosenClass: "queue-sortable-chosen",
+		dragClass: "queue-sortable-drag",
+		forceFallback: true,
+		fallbackOnBody: true,
+		fallbackTolerance: 4,
+		delay: 120,
+		delayOnTouchOnly: true,
+		touchStartThreshold: 4,
+		onStart() {
+			queueDragActive = true;
+			pendingQueueState = null;
+			queueEl.classList.add("queue-dragging");
+		},
+		onEnd(event) {
+			queueDragActive = false;
+			queueEl.classList.remove("queue-dragging");
+			if (event.oldDraggableIndex === event.newDraggableIndex) {
+				applyPendingQueueState();
+				return;
+			}
+			const queueItemID = Number(event.item.dataset.queueItemId);
+			const before = event.item.nextElementSibling;
+			const beforeQueueItemID = before ? Number(before.dataset.queueItemId) : 0;
+			submitQueueReorder(queueItemID, beforeQueueItemID);
+		},
+	});
+	updateQueueSortable();
+}
+
+function updateQueueSortable() {
+	if (!queueSortable) return;
+	const enabled = hasRoomPermission("queue_manage") && !queueReorderPending;
+	queueSortable.option("disabled", !enabled);
+	queueEl.classList.toggle("queue-sortable-enabled", enabled);
+}
+
+function applyPendingQueueState() {
+	const state = pendingQueueState;
+	pendingQueueState = null;
+	if (state) renderState(state);
+}
+
+async function submitQueueReorder(queueItemID, beforeQueueItemID) {
+	if (queueReorderPending || !hasRoomPermission("queue_manage")) return;
+	queueReorderPending = true;
+	updateQueueSortable();
+	try {
+		const state = await api(roomAPI("/api/command"), {
+			method: "POST",
+			body: JSON.stringify({
+				action: "queue_reorder",
+				queue_item_id: queueItemID,
+				before_queue_item_id: beforeQueueItemID,
+			}),
+		});
+		queueReorderPending = false;
+		renderState(state);
+		applyPendingQueueState();
+	} catch (err) {
+		console.error(err);
+		queueReorderPending = false;
+		pendingQueueState = null;
+		try {
+			renderState(await api(roomAPI("/api/state")));
+		} catch (refreshErr) {
+			console.error(refreshErr);
+		}
+		queueEl.classList.add("queue-reorder-error");
+		setTimeout(() => queueEl.classList.remove("queue-reorder-error"), 500);
+	} finally {
+		updateQueueSortable();
+	}
 }
 
 async function command(body) {
@@ -514,25 +745,29 @@ async function loadLibraryStatus() {
   }
 }
 
-function setRailMode(mode) {
+function setRailMode(mode, {load = true, persist = true} = {}) {
 	const playlistsActive = mode === "playlists";
+	if (persist) {
+		storageSet(railModeStorageKey, playlistsActive ? "playlists" : "library");
+	}
 	libraryTab.classList.toggle("active", !playlistsActive);
 	playlistsTab.classList.toggle("active", playlistsActive);
 	libraryViews.forEach((el) => {
 		el.hidden = playlistsActive;
 	});
 	playlistsView.hidden = !playlistsActive;
-	if (playlistsActive) {
+	if (playlistsActive && load) {
 		loadPlaylists(selectedPlaylistID).catch(console.error);
 	}
 }
 
 async function loadPlaylists(selectID = selectedPlaylistID) {
 	playlists = await api("/api/playlists");
-	if (!selectID && playlists.length > 0) {
-		selectID = playlists[0].id;
+	if (!playlists.some((playlist) => playlist.id === selectID)) {
+		selectID = playlists[0]?.id || 0;
 	}
 	selectedPlaylistID = selectID;
+	storageSet(playlistStorageKey, selectedPlaylistID || "");
 	renderPlaylists();
 	if (selectedPlaylistID) {
 		await loadPlaylistDetail(selectedPlaylistID);
@@ -560,24 +795,22 @@ async function loadPlaylistDetail(id) {
 }
 
 function renderPlaylistItem(playlist, item) {
-	const row = document.createElement("div");
-	row.className = "item";
-	row.append(trackMeta(item.title || "Unknown track", [item.artist, item.album].filter(Boolean).join(" · ")));
+	const dedupeKey = item.dedupe_key || "";
+	const track = {
+		dedupe_key: dedupeKey,
+		title: item.title || "Unknown track",
+		artist: item.artist || "",
+		album: item.album || "",
+	};
+	const extraButtons = [];
 	if (playlist.can_edit) {
-		const actions = document.createElement("div");
-		actions.className = "row-actions";
-		const remove = document.createElement("button");
-		remove.className = "secondary compact danger";
-		remove.type = "button";
-		remove.textContent = "Remove";
-		remove.addEventListener("click", async () => {
+		const remove = trashButton("Remove from playlist", async () => {
 			const updated = await api(`/api/playlists/${playlist.id}/items/${item.id}`, {method: "DELETE"});
 			renderPlaylistDetail(updated);
 		});
-		actions.append(remove);
-		row.append(actions);
+		extraButtons.push(remove);
 	}
-	return row;
+	return trackRow(track, standardTrackCommands(dedupeKey), "", dedupeKey, extraButtons);
 }
 
 function renderPlaylistDetail(playlist) {
@@ -592,11 +825,10 @@ function renderPlaylistDetail(playlist) {
 
 function updatePlaylistActionButtons() {
 	const playlist = playlists.find((item) => item.id === selectedPlaylistID);
-	const canRun = Boolean(playlist?.can_run);
-	selectedPlaylistVisibility.hidden = !playlist?.can_edit;
-	selectedPlaylistVisibility.value = playlist?.public ? "shared" : "private";
+	const canRun = Boolean(playlist) && hasRoomPermission("queue_add");
 	queuePlaylistButton.hidden = !canRun;
 	shufflePlaylistButton.hidden = !canRun;
+	deletePlaylistButton.hidden = !playlist?.can_edit;
 }
 
 function emptyHint(text) {
@@ -611,7 +843,7 @@ async function loadRooms() {
   currentUserEl.textContent = info.user?.username || "Signed in";
   const rooms = info.rooms || [];
   if (!currentRoomID) {
-    currentRoomID = info.default_room_id || (rooms[0] && rooms[0].id) || "public";
+    currentRoomID = info.default_room_id || (rooms[0] && rooms[0].id) || "main";
   }
   if (rooms.length > 0 && !rooms.some((room) => room.id === currentRoomID)) {
     location.href = `/rooms/${encodeURIComponent(rooms[0].id)}`;
@@ -625,6 +857,7 @@ async function loadRooms() {
   }));
   roomSelect.value = currentRoomID;
   roomSelect.disabled = rooms.length <= 1;
+  currentPermissions = new Set(info.permissions?.[currentRoomID] || []);
   return true;
 }
 
@@ -636,10 +869,7 @@ async function runSearch() {
   if (q !== searchInput.value.trim() || field !== searchField.value) {
     return;
   }
-  resultsEl.replaceChildren(...tracks.map((track) => trackRow(track, [
-    ["Queue", {action: "queue_add", track_id: track.id}],
-    ["Play", {action: "play_now", track_id: track.id}],
-  ])));
+  resultsEl.replaceChildren(...tracks.map((track) => trackRow(track, standardTrackCommands(track.dedupe_key))));
 }
 
 libraryTab.addEventListener("click", () => setRailMode("library"));
@@ -648,6 +878,7 @@ playlistsTab.addEventListener("click", () => setRailMode("playlists"));
 playlistSelect.addEventListener("change", async () => {
 	selectedPlaylistID = Number(playlistSelect.value);
 	if (!selectedPlaylistID) return;
+	storageSet(playlistStorageKey, selectedPlaylistID);
 	await loadPlaylistDetail(selectedPlaylistID);
 	runSearch().catch(console.error);
 });
@@ -662,13 +893,12 @@ shufflePlaylistButton.addEventListener("click", async () => {
 	await command({action: "playlist_shuffle", playlist_id: selectedPlaylistID});
 });
 
-selectedPlaylistVisibility.addEventListener("change", async () => {
-	if (!selectedPlaylistID) return;
-	const playlist = await api(`/api/playlists/${selectedPlaylistID}`, {
-		method: "PATCH",
-		body: JSON.stringify({public: selectedPlaylistVisibility.value === "shared"}),
-	});
-	renderPlaylistDetail(playlist);
+deletePlaylistButton.addEventListener("click", async () => {
+	const playlist = playlists.find((item) => item.id === selectedPlaylistID);
+	if (!playlist?.can_edit || !confirm(`Delete playlist "${playlist.name}"?`)) return;
+	await api(`/api/playlists/${playlist.id}`, {method: "DELETE"});
+	selectedPlaylistID = 0;
+	await loadPlaylists(0);
 });
 
 newPlaylistButton.addEventListener("click", () => {
@@ -685,7 +915,7 @@ playlistCreateForm.addEventListener("submit", async (event) => {
 	if (!name) return;
 	const playlist = await api("/api/playlists", {
 		method: "POST",
-		body: JSON.stringify({name, public: playlistVisibility.value === "shared"}),
+		body: JSON.stringify({name}),
 	});
 	playlistNameInput.value = "";
 	playlistCreatePanel.hidden = true;
@@ -788,6 +1018,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 restoreSearchPreferences();
+restoreRailPreferences();
 renderPlaybackButton(false);
 setVolume(0);
 renderVolumeButton();
@@ -819,6 +1050,7 @@ async function start() {
   if (!await loadRooms()) {
     return;
   }
+	initQueueSortable();
   closeEvents();
   events = new EventSource(`/rooms/${encodeURIComponent(currentRoomID)}/events`);
   events.addEventListener("state", (event) => {

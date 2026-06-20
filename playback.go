@@ -7,11 +7,14 @@ import (
 	"time"
 )
 
-var ErrEmptyQueue = errors.New("queue is empty")
+var (
+	ErrEmptyQueue        = errors.New("queue is empty")
+	ErrQueueItemNotFound = errors.New("queue item not found")
+)
 
 type PlaybackItem struct {
 	ID          int64     `json:"id,omitempty"`
-	TrackID     int64     `json:"track_id"`
+	DedupeKey   string    `json:"dedupe_key"`
 	At          time.Time `json:"at"`
 	RequestedBy string    `json:"requested_by"`
 }
@@ -32,7 +35,7 @@ type Playback struct {
 	mu                 sync.Mutex
 	roomID             string
 	nextID             int64
-	current            int64
+	current            string
 	currentRequestedBy string
 	started            time.Time
 	paused             bool
@@ -49,27 +52,27 @@ func NewPlayback(roomID string) *Playback {
 	}
 }
 
-func (p *Playback) Add(trackID int64, requestedBy string) PlaybackState {
+func (p *Playback) Add(dedupeKey string, requestedBy string) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	p.nextID++
-	p.queue = append(p.queue, PlaybackItem{ID: p.nextID, TrackID: trackID, At: time.Now(), RequestedBy: requestedBy})
+	p.queue = append(p.queue, PlaybackItem{ID: p.nextID, DedupeKey: dedupeKey, At: time.Now(), RequestedBy: requestedBy})
 	p.bumpLocked()
 	return p.stateLocked()
 }
 
-func (p *Playback) AddMany(trackIDs []int64, requestedBy string) PlaybackState {
+func (p *Playback) AddMany(dedupeKeys []string, requestedBy string) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	now := time.Now()
-	for _, trackID := range trackIDs {
-		if trackID <= 0 {
+	for _, dedupeKey := range dedupeKeys {
+		if dedupeKey == "" {
 			continue
 		}
 		p.nextID++
-		p.queue = append(p.queue, PlaybackItem{ID: p.nextID, TrackID: trackID, At: now, RequestedBy: requestedBy})
+		p.queue = append(p.queue, PlaybackItem{ID: p.nextID, DedupeKey: dedupeKey, At: now, RequestedBy: requestedBy})
 	}
 	p.bumpLocked()
 	return p.stateLocked()
@@ -79,7 +82,7 @@ func (p *Playback) Play() (PlaybackState, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.current == 0 {
+	if p.current == "" {
 		if !p.startNextLocked() {
 			return PlaybackState{}, ErrEmptyQueue
 		}
@@ -92,13 +95,13 @@ func (p *Playback) Play() (PlaybackState, error) {
 	return p.stateLocked(), nil
 }
 
-func (p *Playback) PlayNow(trackID int64, requestedBy string) PlaybackState {
+func (p *Playback) PlayNow(dedupeKey string, requestedBy string) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.removeQueuedTrackLocked(trackID)
+	p.removeQueuedTrackLocked(dedupeKey)
 	p.recordCurrentLocked()
-	p.current = trackID
+	p.current = dedupeKey
 	p.currentRequestedBy = requestedBy
 	p.started = time.Now()
 	p.paused = false
@@ -111,7 +114,7 @@ func (p *Playback) Pause() PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.current != 0 && !p.paused {
+	if p.current != "" && !p.paused {
 		p.pausePos = time.Since(p.started).Milliseconds()
 		if p.pausePos < 0 {
 			p.pausePos = 0
@@ -122,14 +125,14 @@ func (p *Playback) Pause() PlaybackState {
 	return p.stateLocked()
 }
 
-func (p *Playback) Seek(positionMS int64) PlaybackState {
+func (p *Playback) SeekTo(positionMS int64) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if positionMS < 0 {
 		positionMS = 0
 	}
-	if p.current != 0 {
+	if p.current != "" {
 		if p.paused {
 			p.pausePos = positionMS
 		} else {
@@ -157,11 +160,11 @@ func (p *Playback) Previous() PlaybackState {
 	}
 	item := p.history[0]
 	p.history = p.history[1:]
-	if p.current != 0 {
+	if p.current != "" {
 		p.nextID++
-		p.queue = append([]PlaybackItem{{ID: p.nextID, TrackID: p.current, At: time.Now(), RequestedBy: p.currentRequestedBy}}, p.queue...)
+		p.queue = append([]PlaybackItem{{ID: p.nextID, DedupeKey: p.current, At: time.Now(), RequestedBy: p.currentRequestedBy}}, p.queue...)
 	}
-	p.current = item.TrackID
+	p.current = item.DedupeKey
 	p.currentRequestedBy = item.RequestedBy
 	p.started = time.Now()
 	p.paused = false
@@ -170,11 +173,11 @@ func (p *Playback) Previous() PlaybackState {
 	return p.stateLocked()
 }
 
-func (p *Playback) Ended(trackID int64) PlaybackState {
+func (p *Playback) Ended(dedupeKey string) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.current != 0 && p.current == trackID {
+	if p.current != "" && p.current == dedupeKey {
 		p.startNextLocked()
 	}
 	return p.stateLocked()
@@ -194,42 +197,50 @@ func (p *Playback) Remove(queueItemID int64) PlaybackState {
 	return p.stateLocked()
 }
 
-func (p *Playback) Move(queueItemID int64, delta int) PlaybackState {
+func (p *Playback) Reorder(queueItemID, beforeQueueItemID int64) (PlaybackState, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	sourceIndex := -1
 	for i, item := range p.queue {
-		if item.ID != queueItemID {
-			continue
+		if item.ID == queueItemID {
+			sourceIndex = i
+			break
 		}
-		j := i + delta
-		if j < 0 || j >= len(p.queue) {
-			return p.stateLocked()
-		}
-		p.queue[i], p.queue[j] = p.queue[j], p.queue[i]
-		p.bumpLocked()
-		return p.stateLocked()
 	}
-	return p.stateLocked()
-}
-
-func (p *Playback) MoveToNext(queueItemID int64) PlaybackState {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	for i, item := range p.queue {
-		if item.ID != queueItemID {
-			continue
-		}
-		if i == 0 {
-			return p.stateLocked()
-		}
-		copy(p.queue[1:i+1], p.queue[0:i])
-		p.queue[0] = item
-		p.bumpLocked()
-		return p.stateLocked()
+	if sourceIndex < 0 {
+		return p.stateLocked(), ErrQueueItemNotFound
 	}
-	return p.stateLocked()
+	if queueItemID == beforeQueueItemID {
+		return p.stateLocked(), nil
+	}
+
+	next := make([]PlaybackItem, 0, len(p.queue))
+	next = append(next, p.queue[:sourceIndex]...)
+	next = append(next, p.queue[sourceIndex+1:]...)
+	insertIndex := len(next)
+	if beforeQueueItemID != 0 {
+		insertIndex = -1
+		for i, item := range next {
+			if item.ID == beforeQueueItemID {
+				insertIndex = i
+				break
+			}
+		}
+		if insertIndex < 0 {
+			return p.stateLocked(), ErrQueueItemNotFound
+		}
+	}
+
+	next = append(next, PlaybackItem{})
+	copy(next[insertIndex+1:], next[insertIndex:])
+	next[insertIndex] = p.queue[sourceIndex]
+	if slices.EqualFunc(p.queue, next, func(a, b PlaybackItem) bool { return a.ID == b.ID }) {
+		return p.stateLocked(), nil
+	}
+	p.queue = next
+	p.bumpLocked()
+	return p.stateLocked(), nil
 }
 
 func (p *Playback) Clear() PlaybackState {
@@ -258,6 +269,12 @@ func (p *Playback) Snapshot() PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.stateLocked()
+}
+
+func (p *Playback) Notify() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.bumpLocked()
 }
 
 func (p *Playback) Subscribe(listener UserInfo) (<-chan PlaybackState, func()) {
@@ -293,7 +310,7 @@ func (p *Playback) CloseSubscribers() {
 func (p *Playback) startNextLocked() bool {
 	if len(p.queue) == 0 {
 		p.recordCurrentLocked()
-		p.current = 0
+		p.current = ""
 		p.currentRequestedBy = ""
 		p.started = time.Time{}
 		p.paused = false
@@ -304,7 +321,7 @@ func (p *Playback) startNextLocked() bool {
 	item := p.queue[0]
 	p.queue = p.queue[1:]
 	p.recordCurrentLocked()
-	p.current = item.TrackID
+	p.current = item.DedupeKey
 	p.currentRequestedBy = item.RequestedBy
 	p.started = time.Now()
 	p.paused = false
@@ -313,9 +330,9 @@ func (p *Playback) startNextLocked() bool {
 	return true
 }
 
-func (p *Playback) removeQueuedTrackLocked(trackID int64) {
+func (p *Playback) removeQueuedTrackLocked(dedupeKey string) {
 	for i, item := range p.queue {
-		if item.TrackID == trackID {
+		if item.DedupeKey == dedupeKey {
 			p.queue = append(p.queue[:i], p.queue[i+1:]...)
 			return
 		}
@@ -323,10 +340,10 @@ func (p *Playback) removeQueuedTrackLocked(trackID int64) {
 }
 
 func (p *Playback) recordCurrentLocked() {
-	if p.current == 0 {
+	if p.current == "" {
 		return
 	}
-	p.history = append([]PlaybackItem{{TrackID: p.current, At: time.Now(), RequestedBy: p.currentRequestedBy}}, p.history...)
+	p.history = append([]PlaybackItem{{DedupeKey: p.current, At: time.Now(), RequestedBy: p.currentRequestedBy}}, p.history...)
 	if len(p.history) > 25 {
 		p.history = p.history[:25]
 	}
@@ -348,7 +365,7 @@ func (p *Playback) stateLocked() PlaybackState {
 	listeners := p.listenersLocked()
 	return PlaybackState{
 		RoomID:            p.roomID,
-		Current:           PlaybackItem{TrackID: p.current, At: p.started, RequestedBy: p.currentRequestedBy},
+		Current:           PlaybackItem{DedupeKey: p.current, At: p.started, RequestedBy: p.currentRequestedBy},
 		StartedAt:         p.started,
 		Paused:            p.paused,
 		PositionAtPauseMS: p.pausePos,

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -52,8 +54,10 @@ func TestValidateRooms(t *testing.T) {
 		MusicDirs:   []string{"/music"},
 		ScanWorkers: defaultScanWorkers,
 		Rooms: []Room{
-			{ID: "public", Name: "Public Room", Public: true},
-			{ID: "office", Name: "Office", AllowedGroups: []string{"staff"}, AllowedRoles: []string{"listener"}},
+			{ID: "main", Name: "Main Room"},
+			{ID: "office", Name: "Office", Grants: map[string][]RoomPermission{
+				"staff": {PermissionQueueManage},
+			}},
 		},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -65,9 +69,9 @@ func TestValidateRooms(t *testing.T) {
 		t.Fatal("invalid room id accepted")
 	}
 	cfg.Rooms[1].ID = "office"
-	cfg.Rooms[1].AllowedRoles = []string{"owner"}
+	cfg.Rooms[1].Grants["staff"] = []RoomPermission{"unknown"}
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("invalid room role accepted")
+		t.Fatal("invalid room permission accepted")
 	}
 }
 
@@ -76,20 +80,22 @@ func TestApplyDefaultsNormalizesRooms(t *testing.T) {
 		MusicDirs:   []string{"/music"},
 		ScanWorkers: defaultScanWorkers,
 		Rooms: []Room{{
-			ID:            " public ",
-			Name:          " Public Room ",
-			Public:        true,
-			AllowedGroups: []string{" staff ", "staff", ""},
+			ID:   " main ",
+			Name: " Main Room ",
+			Grants: map[string][]RoomPermission{
+				" staff ": {PermissionQueueManage, PermissionQueueManage},
+			},
 		}},
 	}
 	if err := cfg.ApplyDefaults(); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Rooms[0].ID != "public" || cfg.Rooms[0].Name != "Public Room" {
+	if cfg.Rooms[0].ID != "main" || cfg.Rooms[0].Name != "Main Room" {
 		t.Fatalf("room = %#v, want trimmed id/name", cfg.Rooms[0])
 	}
-	if len(cfg.Rooms[0].AllowedGroups) != 1 || cfg.Rooms[0].AllowedGroups[0] != "staff" {
-		t.Fatalf("allowed groups = %#v, want [staff]", cfg.Rooms[0].AllowedGroups)
+	permissions := cfg.Rooms[0].Grants["staff"]
+	if len(permissions) != 1 || permissions[0] != PermissionQueueManage {
+		t.Fatalf("staff permissions = %#v, want [queue_manage]", permissions)
 	}
 }
 
@@ -116,6 +122,12 @@ func TestLoadConfigCreatesDefaultConfigAndMusicDir(t *testing.T) {
 	}
 	if cfg.ScanWorkers != defaultScanWorkers {
 		t.Fatalf("ScanWorkers = %d, want %d", cfg.ScanWorkers, defaultScanWorkers)
+	}
+	if len(cfg.Rooms) != 1 || cfg.Rooms[0].Name != "Public Room" {
+		t.Fatalf("default rooms = %#v, want Public Room", cfg.Rooms)
+	}
+	if got := cfg.Rooms[0].Grants[EveryoneRoomGrant]; !slices.Equal(got, roomPermissions) {
+		t.Fatalf("default everyone permissions = %#v, want %#v", got, roomPermissions)
 	}
 	if info, err := os.Stat(wantMusic); err != nil || !info.IsDir() {
 		t.Fatalf("music dir was not created: info=%v err=%v", info, err)
@@ -163,6 +175,42 @@ func TestLoadConfigCreatesConfiguredMusicDirs(t *testing.T) {
 	}
 	if info, err := os.Stat(musicDir); err != nil || !info.IsDir() {
 		t.Fatalf("configured music dir was not created: info=%v err=%v", info, err)
+	}
+}
+
+func TestLoadConfigMigratesDefaultRoomToEveryoneGrant(t *testing.T) {
+	dir := t.TempDir()
+	musicDir := filepath.Join(dir, "music")
+	configPath := filepath.Join(dir, "config.json")
+	data := []byte(`{
+  "music_dirs": [` + strconvQuote(musicDir) + `],
+  "rooms": [
+    {"id": "main", "name": "Public Room", "grants": {"staff": ["queue_add"]}},
+    {"id": "quiet", "name": "Quiet Room", "grants": {"staff": ["playback_control"]}}
+  ]
+}`)
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version != currentConfigVersion {
+		t.Fatalf("config version = %d, want %d", cfg.Version, currentConfigVersion)
+	}
+	if got := cfg.Rooms[0].Grants[EveryoneRoomGrant]; !slices.Equal(got, roomPermissions) {
+		t.Fatalf("default room everyone permissions = %#v, want %#v", got, roomPermissions)
+	}
+	if _, ok := cfg.Rooms[1].Grants[EveryoneRoomGrant]; ok {
+		t.Fatal("restricted room received everyone grant")
+	}
+	persisted, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), `"version": 1`) || !strings.Contains(string(persisted), `"everyone"`) {
+		t.Fatalf("migration was not persisted: %s", persisted)
 	}
 }
 

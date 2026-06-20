@@ -56,21 +56,14 @@
           <div id="playlistCreatePanel" class="playlist-create-panel" hidden>
             <form id="playlistCreateForm" class="playlist-create">
               <input id="playlistName" type="text" placeholder="Playlist name" autocomplete="off">
-              <select id="playlistVisibility" aria-label="Playlist visibility">
-                <option value="shared" selected>Shared</option>
-                <option value="private">Private</option>
-              </select>
               <button class="secondary compact" type="submit">Create</button>
             </form>
           </div>
           <div class="playlist-control-row">
             <select id="playlistSelect" aria-label="Playlist"></select>
-            <select id="selectedPlaylistVisibility" aria-label="Playlist visibility" hidden>
-              <option value="shared">Shared</option>
-              <option value="private">Private</option>
-            </select>
             <button id="queuePlaylist" class="secondary compact" type="button" hidden>Queue</button>
             <button id="shufflePlaylist" class="secondary compact" type="button" hidden>Shuffle</button>
+            <button id="deletePlaylist" class="secondary compact icon-only trash-button" type="button" title="Delete playlist" aria-label="Delete playlist" hidden><span></span></button>
           </div>
           <div id="playlistDetail"></div>
         </section>
@@ -139,6 +132,7 @@
       </section>
     </section>
   </main>
+  <script src="/assets/vendor/sortable-1.15.7.min.js"></script>
   <script src="/assets/app.js"></script>
 </body>
 </html>

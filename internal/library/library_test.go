@@ -3,6 +3,7 @@ package library_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -230,11 +231,11 @@ func TestPlaylistResolvesRemainingDuplicateAfterRescan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
-	playlist, err := lib.CreatePlaylist(ctx, "Favorites", "user1", true)
+	playlist, err := lib.CreatePlaylist(ctx, "Favorites", "user1")
 	if err != nil {
 		t.Fatalf("create playlist: %v", err)
 	}
-	if _, err := lib.AddPlaylistTrack(ctx, playlist.ID, tracks[0].ID); err != nil {
+	if _, err := lib.AddPlaylistTrack(ctx, playlist.ID, tracks[0].DedupeKey); err != nil {
 		t.Fatalf("add playlist track: %v", err)
 	}
 	if err := os.Remove(pathA); err != nil {
@@ -250,9 +251,16 @@ func TestPlaylistResolvesRemainingDuplicateAfterRescan(t *testing.T) {
 	if len(resolved) != 1 || resolved[0].Title != "Same Song" {
 		t.Fatalf("resolved tracks = %#v, want remaining duplicate", resolved)
 	}
+	items, err := lib.PlaylistItems(ctx, playlist.ID)
+	if err != nil {
+		t.Fatalf("playlist items: %v", err)
+	}
+	if len(items) != 1 || items[0].DedupeKey != resolved[0].DedupeKey {
+		t.Fatalf("playlist item dedupe key = %#v, want %q", items, resolved[0].DedupeKey)
+	}
 }
 
-func TestRemovePlaylistItem(t *testing.T) {
+func TestRemovePlaylistItemAndPlaylist(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Artist - Track.mp3")
@@ -271,43 +279,46 @@ func TestRemovePlaylistItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
-	playlist, err := lib.CreatePlaylist(ctx, "Favorites", "user1", true)
+	playlist, err := lib.CreatePlaylist(ctx, "Favorites", "user1")
 	if err != nil {
 		t.Fatalf("create playlist: %v", err)
 	}
-	item, err := lib.AddPlaylistTrack(ctx, playlist.ID, tracks[0].ID)
+	item, err := lib.AddPlaylistTrack(ctx, playlist.ID, tracks[0].DedupeKey)
 	if err != nil {
 		t.Fatalf("add playlist track: %v", err)
+	}
+	items, err := lib.PlaylistItems(ctx, playlist.ID)
+	if err != nil {
+		t.Fatalf("playlist items: %v", err)
+	}
+	if len(items) != 1 || items[0].DedupeKey != tracks[0].DedupeKey {
+		t.Fatalf("playlist item dedupe key = %#v, want %q", items, tracks[0].DedupeKey)
 	}
 	if err := lib.RemovePlaylistItem(ctx, playlist.ID, item.ID); err != nil {
 		t.Fatalf("remove playlist item: %v", err)
 	}
-	items, err := lib.PlaylistItems(ctx, playlist.ID)
+	items, err = lib.PlaylistItems(ctx, playlist.ID)
 	if err != nil {
 		t.Fatalf("playlist items: %v", err)
 	}
 	if len(items) != 0 {
 		t.Fatalf("playlist items after remove = %#v, want empty", items)
 	}
-}
-
-func TestUpdatePlaylistVisibility(t *testing.T) {
-	ctx := context.Background()
-	lib, err := musiclib.Open(ctx, filepath.Join(t.TempDir(), "tracks.sqlite"), nil, 1)
-	if err != nil {
-		t.Fatalf("open library: %v", err)
+	if _, err := lib.AddPlaylistTrack(ctx, playlist.ID, tracks[0].DedupeKey); err != nil {
+		t.Fatalf("re-add playlist track: %v", err)
 	}
-	defer lib.Close()
-	playlist, err := lib.CreatePlaylist(ctx, "Favorites", "user1", true)
-	if err != nil {
-		t.Fatalf("create playlist: %v", err)
+	if err := lib.DeletePlaylist(ctx, playlist.ID); err != nil {
+		t.Fatalf("delete playlist: %v", err)
 	}
-	updated, err := lib.UpdatePlaylistVisibility(ctx, playlist.ID, false)
-	if err != nil {
-		t.Fatalf("update playlist visibility: %v", err)
+	if _, err := lib.GetPlaylist(ctx, playlist.ID); !errors.Is(err, musiclib.ErrPlaylistNotFound) {
+		t.Fatalf("get deleted playlist error = %v, want ErrPlaylistNotFound", err)
 	}
-	if updated.Public {
-		t.Fatalf("playlist public = true, want false")
+	items, err = lib.PlaylistItems(ctx, playlist.ID)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("deleted playlist items = %#v, %v; want none", items, err)
+	}
+	if err := lib.DeletePlaylist(ctx, playlist.ID); !errors.Is(err, musiclib.ErrPlaylistNotFound) {
+		t.Fatalf("delete missing playlist error = %v, want ErrPlaylistNotFound", err)
 	}
 }
 

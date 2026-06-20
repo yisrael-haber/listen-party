@@ -5,7 +5,7 @@ import (
 	"io/fs"
 )
 
-//go:embed frontend/index.html frontend/style.css frontend/app.js
+//go:embed frontend/index.html frontend/style.css frontend/app.js frontend/vendor/*
 var webFS embed.FS
 
 //go:embed frontend/admin.html frontend/admin.js

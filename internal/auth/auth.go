@@ -22,8 +22,7 @@ import (
 type Role string
 
 const (
-	RoleListener Role = "listener"
-	RoleAdmin    Role = "admin"
+	RoleAdmin Role = "admin"
 
 	defaultAdminEmail    = "admin@listen-party.local"
 	defaultAdminPassword = "admin"
@@ -35,8 +34,7 @@ const (
 type UserInfo struct {
 	ID       string   `json:"id"`
 	Username string   `json:"username"`
-	Role     Role     `json:"role"`
-	RoomIDs  []string `json:"room_ids"`
+	Role     Role     `json:"role,omitempty"`
 	Groups   []string `json:"groups"`
 }
 
@@ -223,10 +221,10 @@ func (s *Service) Authorized(r *http.Request, roles ...Role) bool {
 	if !ok {
 		return false
 	}
+	if len(roles) == 0 {
+		return true
+	}
 	for _, role := range roles {
-		if role == RoleListener && (user.Role == RoleListener || user.Role == RoleAdmin) {
-			return true
-		}
 		if role == RoleAdmin && user.Role == RoleAdmin {
 			return true
 		}
@@ -249,7 +247,7 @@ func (s *Service) CurrentUser(r *http.Request) (UserInfo, bool) {
 	if record.Collection().Name != usersCollection || !record.GetBool("enabled") {
 		return UserInfo{}, false
 	}
-	role := RoleListener
+	var role Role
 	if record.GetString("app_role") == string(RoleAdmin) {
 		role = RoleAdmin
 	}
@@ -257,7 +255,6 @@ func (s *Service) CurrentUser(r *http.Request) (UserInfo, bool) {
 		ID:       record.Id,
 		Username: record.GetString("username"),
 		Role:     role,
-		RoomIDs:  splitMetadataList(record.GetString("room_ids")),
 		Groups:   splitMetadataList(record.GetString("groups")),
 	}, true
 }
@@ -360,9 +357,6 @@ func bindOAuthDefaults(app core.App) {
 			if _, ok := e.CreateData["enabled"]; !ok {
 				e.CreateData["enabled"] = true
 			}
-			if _, ok := e.CreateData["app_role"]; !ok {
-				e.CreateData["app_role"] = string(RoleListener)
-			}
 			if e.OAuth2User != nil && e.OAuth2User.Username != "" {
 				if _, ok := e.CreateData["username"]; !ok {
 					e.CreateData["username"] = e.OAuth2User.Username
@@ -447,23 +441,19 @@ func ensureUserMetadata(app core.App) error {
 	if collection.Fields.GetByName("app_role") == nil {
 		collection.Fields.Add(&core.TextField{
 			Name: "app_role",
-			Help: "listen-party role: listener or admin.",
+			Help: "Set to admin for unrestricted listen-party access; otherwise leave empty.",
 			Max:  32,
 		})
 		changed = true
 	}
-	if collection.Fields.GetByName("room_ids") == nil {
-		collection.Fields.Add(&core.TextField{
-			Name: "room_ids",
-			Help: "Comma-separated listen-party room IDs this user can access.",
-			Max:  1000,
-		})
+	if collection.Fields.GetByName("room_ids") != nil {
+		collection.Fields.RemoveByName("room_ids")
 		changed = true
 	}
 	if collection.Fields.GetByName("groups") == nil {
 		collection.Fields.Add(&core.TextField{
 			Name: "groups",
-			Help: "Comma-separated listen-party groups for room access.",
+			Help: "Comma-separated groups used for listen-party room permissions.",
 			Max:  1000,
 		})
 		changed = true
@@ -513,7 +503,7 @@ func syncMissingUserColumns(app core.App, collection *core.Collection) error {
 	if err != nil {
 		return err
 	}
-	for _, fieldName := range []string{"username", "enabled", "app_role", "room_ids", "groups"} {
+	for _, fieldName := range []string{"username", "enabled", "app_role", "groups"} {
 		if slices.Contains(columns, fieldName) {
 			continue
 		}

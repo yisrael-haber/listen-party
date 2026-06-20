@@ -10,8 +10,7 @@ type Role = appauth.Role
 type UserInfo = appauth.UserInfo
 
 const (
-	RoleListener = appauth.RoleListener
-	RoleAdmin    = appauth.RoleAdmin
+	RoleAdmin = appauth.RoleAdmin
 )
 
 type AuthGate interface {

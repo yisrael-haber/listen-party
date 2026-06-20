@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -78,6 +79,43 @@ func TestOpenBootstrapsAdminAndAuthAdminRedirect(t *testing.T) {
 	}
 }
 
+func TestBootstrapSuperuserCanUseAdminAPI(t *testing.T) {
+	svc, err := Open(Config{
+		DataDir:             filepath.Join(t.TempDir(), "auth"),
+		BootstrapAdminEmail: "admin@listen-party.local",
+	})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer svc.Close()
+
+	body := `{"identity":"admin@listen-party.local","password":"admin"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/collections/_superusers/auth-with-password", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	svc.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("superuser login status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var authResponse struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &authResponse); err != nil {
+		t.Fatal(err)
+	}
+	if authResponse.Token == "" {
+		t.Fatal("superuser login returned no token")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/collections", nil)
+	req.Header.Set("Authorization", "Bearer "+authResponse.Token)
+	rec = httptest.NewRecorder()
+	svc.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("authenticated admin API status = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAuthorizedRejectsSuperuserTokens(t *testing.T) {
 	svc, err := Open(Config{
 		DataDir:             filepath.Join(t.TempDir(), "auth"),
@@ -129,6 +167,34 @@ func TestAuthorizedAcceptsSessionCookie(t *testing.T) {
 	}
 }
 
+func TestAuthorizedAcceptsRegularUserWithoutRole(t *testing.T) {
+	svc, err := Open(Config{
+		DataDir:             filepath.Join(t.TempDir(), "auth"),
+		BootstrapAdminEmail: "admin@listen-party.local",
+	})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer svc.Close()
+
+	user, err := createAppUser(svc, "alice", "changed-password", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := user.NewAuthToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	if !svc.Authorized(req) {
+		t.Fatal("regular user was not authorized as an enabled user")
+	}
+	if svc.Authorized(req, RoleAdmin) {
+		t.Fatal("regular user was authorized as admin")
+	}
+}
+
 func TestRequireRedirectsHTMLRequests(t *testing.T) {
 	svc, err := Open(Config{
 		DataDir:             filepath.Join(t.TempDir(), "auth"),
@@ -139,7 +205,7 @@ func TestRequireRedirectsHTMLRequests(t *testing.T) {
 	}
 	defer svc.Close()
 
-	handler := svc.Require(RoleListener)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := svc.Require()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
