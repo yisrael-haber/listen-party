@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -223,7 +224,7 @@ func TestPermissionForActionKeepsCapabilitiesIndependent(t *testing.T) {
 			t.Fatalf("%s permission = %q, %v", action, permission, ok)
 		}
 	}
-	for _, action := range []string{"queue_remove", "queue_reorder", "queue_clear", "history_clear"} {
+	for _, action := range []string{"queue_remove", "queue_reorder", "queue_clear", "history_clear", "auto_dj"} {
 		if permission, ok := permissionForAction(action); !ok || permission != PermissionQueueManage {
 			t.Fatalf("%s permission = %q, %v", action, permission, ok)
 		}
@@ -232,6 +233,63 @@ func TestPermissionForActionKeepsCapabilitiesIndependent(t *testing.T) {
 		if permission, ok := permissionForAction(action); !ok || permission != PermissionPlaybackControl {
 			t.Fatalf("%s permission = %q, %v", action, permission, ok)
 		}
+	}
+}
+
+func TestAutoDJToggleAndAdvanceUseQueueManagementPermission(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	for _, name := range []string{"Artist - First.mp3", "Artist - Second.mp3"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lib, err := musiclib.Open(ctx, filepath.Join(t.TempDir(), "tracks.sqlite"), []string{dir}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lib.Close()
+	if err := lib.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tracks, err := lib.Search(ctx, "Artist")
+	if err != nil || len(tracks) != 2 {
+		t.Fatalf("tracks = %#v, err = %v", tracks, err)
+	}
+	server := testServer(&Server{
+		Auth:    fakeAuth{user: UserInfo{Username: "alice", Groups: []string{"staff"}}},
+		Library: lib,
+		Config: Config{Rooms: []Room{{
+			ID: "main", Name: "Main", Grants: map[string][]RoomPermission{
+				"staff": {PermissionQueueManage, PermissionPlaybackControl},
+			},
+		}}},
+	})
+	room, _ := server.Rooms.Get("main")
+	room.Playback.PlayNow(tracks[0].DedupeKey, "alice")
+
+	req := httptest.NewRequest(http.MethodPost, "/rooms/main/api/command", strings.NewReader(`{"action":"auto_dj","enabled":true}`))
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("enable status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !room.Playback.Snapshot().AutoDJEnabled {
+		t.Fatal("auto-dj was not enabled")
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/rooms/main/api/command", strings.NewReader(`{"action":"skip"}`))
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("skip status = %d: %s", rec.Code, rec.Body.String())
+	}
+	state := room.Playback.Snapshot()
+	if state.Current.Source != "auto_dj" || state.Current.DedupeKey == "" || state.Current.DedupeKey == tracks[0].DedupeKey {
+		t.Fatalf("auto-dj current = %#v", state.Current)
+	}
+	if _, candidate := room.Playback.AutoDJCandidate(); candidate == "" {
+		t.Fatal("next auto-dj candidate was not prepared")
 	}
 }
 
@@ -261,6 +319,75 @@ func TestEveryPlaylistIsVisible(t *testing.T) {
 		if !strings.Contains(body, `"name":"`+name+`"`) {
 			t.Fatalf("/api/playlists body = %s, missing %s", body, name)
 		}
+	}
+}
+
+func TestPlaylistOwnerImportsNativeFolderManifest(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	dir := filepath.Join(root, "Legacy")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("legacy-track")
+	trackPath := filepath.Join(dir, "Artist - Song.mp3")
+	if err := os.WriteFile(trackPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(trackPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := musiclib.Open(ctx, filepath.Join(t.TempDir(), "tracks.sqlite"), []string{root}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lib.Close()
+	if err := lib.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	playlist, err := lib.CreatePlaylist(ctx, "Imported", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(map[string]any{"files": []musiclib.FolderManifestFile{{
+		RelativePath: "Legacy/Artist - Song.mp3", Size: int64(len(data)), LastModifiedMS: info.ModTime().UnixMilli(),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := testServer(&Server{Auth: fakeAuth{user: UserInfo{ID: "owner", Username: "alice"}}, Library: lib}).Handler()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/playlists/%d/import-folder", playlist.ID), strings.NewReader(string(payload)))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("import status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var result musiclib.PlaylistFolderImport
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Imported != 1 {
+		t.Fatalf("import result = %#v", result)
+	}
+}
+
+func TestSessionReportsRoomAdministration(t *testing.T) {
+	server := testServer(&Server{
+		Auth:   fakeAuth{user: UserInfo{Username: "alice", Groups: []string{"room-admins"}}},
+		Config: Config{Rooms: []Room{{ID: "main", Name: "Main", AdminGroups: []string{"room-admins"}}}},
+	}).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	var response struct {
+		RoomAdministration map[string]bool `json:"room_administration"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.RoomAdministration["main"] {
+		t.Fatalf("room administration = %#v", response.RoomAdministration)
 	}
 }
 
@@ -334,6 +461,128 @@ func TestRescanDirRequiresConfiguredMusicDir(t *testing.T) {
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("/api/admin/rescan-dir status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestRoomAdministratorCanUpdateOnlyRoomGrants(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config.json")
+	cfg := NewDefaultConfigForRoot(root)
+	cfg.Rooms = []Room{{
+		ID: "main", Name: "Main", AdminGroups: []string{"room-admins"},
+		Grants: map[string][]RoomPermission{"listeners": {PermissionQueueAdd}},
+	}}
+	server := testServer(&Server{
+		Auth:       fakeAuth{user: UserInfo{Username: "alice", Groups: []string{"room-admins"}}},
+		Config:     cfg,
+		ConfigPath: configPath,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/rooms/main/api/admin/grants", strings.NewReader(`{"grants":{"staff":["queue_manage"]}}`))
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("room grant update status = %d: %s", rec.Code, rec.Body.String())
+	}
+	room, _ := server.Rooms.Get("main")
+	if !slices.Equal(room.AdminGroups, []string{"room-admins"}) {
+		t.Fatalf("administrator groups changed: %#v", room.AdminGroups)
+	}
+	if !UserHasRoomPermission(UserInfo{Groups: []string{"staff"}}, *room, PermissionQueueManage) {
+		t.Fatal("updated grant did not apply immediately")
+	}
+	loaded, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(loaded.Rooms[0].AdminGroups, []string{"room-admins"}) {
+		t.Fatalf("persisted administrator groups = %#v", loaded.Rooms[0].AdminGroups)
+	}
+	if loaded.Revision != 2 {
+		t.Fatalf("config revision = %d, want 2", loaded.Revision)
+	}
+}
+
+func TestUnrelatedUserCannotAdministerRoom(t *testing.T) {
+	server := testServer(&Server{
+		Auth:   fakeAuth{user: UserInfo{Username: "alice", Groups: []string{"staff"}}},
+		Config: Config{Rooms: []Room{{ID: "main", Name: "Main", AdminGroups: []string{"room-admins"}}}},
+	}).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/rooms/main/api/admin", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("room admin status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestRoomAdministratorDisconnectsListenerSession(t *testing.T) {
+	room := Room{ID: "main", Name: "Main"}
+	server := testServer(&Server{
+		Auth:   fakeAuth{user: UserInfo{Username: "admin", Role: RoleAdmin, SessionKey: "session:admin"}},
+		Config: Config{Rooms: []Room{room}},
+	})
+	activeRoom, _ := server.Rooms.Get("main")
+	listener := UserInfo{ID: "user1", Username: "alice", SessionKey: "session:alice"}
+	ch, cancel, allowed := activeRoom.Playback.SubscribeIfAllowed(listener)
+	defer cancel()
+	if !allowed {
+		t.Fatal("listener was rejected before disconnect")
+	}
+	<-ch
+
+	req := httptest.NewRequest(http.MethodPost, "/rooms/main/api/admin/disconnect", strings.NewReader(`{"username":"alice"}`))
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("disconnect status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if state := <-ch; !state.Disconnect {
+		t.Fatalf("disconnect state = %#v", state)
+	}
+
+	server.Auth = fakeAuth{user: listener}
+	req = httptest.NewRequest(http.MethodGet, "/api/session", nil)
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	var session struct {
+		Disconnected map[string]bool `json:"disconnected"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	if !session.Disconnected["main"] {
+		t.Fatalf("disconnected rooms = %#v", session.Disconnected)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/rooms/main/api/state", nil)
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("disconnected state status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+}
+
+func TestDisconnectSSEEventIsTerminal(t *testing.T) {
+	server := &Server{}
+	req := httptest.NewRequest(http.MethodGet, "/rooms/main/events", nil)
+	rec := httptest.NewRecorder()
+	if !server.writeEvent(rec, req, PlaybackState{Disconnect: true}) {
+		t.Fatal("disconnect event write failed")
+	}
+	if got := rec.Body.String(); got != "event: disconnect\ndata: {}\n\n" {
+		t.Fatalf("disconnect event = %q", got)
+	}
+}
+
+func TestGlobalConfigUpdateRejectsStaleRevision(t *testing.T) {
+	server := testServer(&Server{
+		Auth:   fakeAuth{user: UserInfo{Username: "admin", Role: RoleAdmin}},
+		Config: Config{Revision: 3, Rooms: []Room{{ID: "main", Name: "Main"}}},
+	}).Handler()
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/config", strings.NewReader(`{"revision":2}`))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale config status = %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
 	}
 }
 

@@ -17,6 +17,15 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	logFile, logPath, err := setupApplicationLogging(os.Stdout)
+	if err != nil {
+		slog.Warn("file logging unavailable", "error", err)
+	} else {
+		defer logFile.Close()
+		slog.Info("file logging enabled", "path", logPath)
+	}
+
 	var configPath string
 	flag.StringVar(&configPath, "config", "", "path to JSON config file")
 	flag.Parse()

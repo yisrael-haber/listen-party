@@ -15,6 +15,11 @@
           <button class="secondary compact" type="submit">Logout</button>
         </form>
         <select id="roomSelect" class="room-select" aria-label="Room"></select>
+        <button id="roomSettingsButton" class="secondary compact icon-only room-settings-button" type="button" title="Room settings" aria-label="Room settings" aria-controls="roomSettingsView" aria-expanded="false" hidden>
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"></path>
+          </svg>
+        </button>
       </div>
 
       <section class="controls">
@@ -26,7 +31,24 @@
         </div>
       </section>
 
-      <section class="search">
+      <section id="roomSettingsView" class="room-settings-view" hidden>
+        <div class="room-settings-header">
+          <button id="closeRoomSettings" class="secondary compact icon-only" type="button" title="Back to library" aria-label="Back to library">
+            <span aria-hidden="true">←</span>
+          </button>
+          <div class="room-settings-copy">
+            <h2>Room permissions</h2>
+            <p class="hint">Manage group access for this room.</p>
+          </div>
+          <div class="room-settings-actions">
+            <span id="roomSettingsStatus" class="status"></span>
+            <button id="saveRoomSettings" class="secondary compact" type="button">Save</button>
+          </div>
+        </div>
+        <div id="roomSettingsGrants"></div>
+      </section>
+
+      <section id="libraryPanel" class="search">
         <div class="section-head">
           <div class="rail-tabs" role="tablist" aria-label="Library views">
             <button id="libraryTab" class="rail-tab active" type="button">Library</button>
@@ -38,6 +60,7 @@
           <label class="search-field">
             <span>Search by</span>
             <select id="searchField" name="field">
+              <option value="">All fields</option>
               <option value="title">Title</option>
               <option value="artist">Artist</option>
               <option value="album">Album</option>
@@ -52,6 +75,7 @@
         <section id="playlistsView" class="playlists-view" hidden>
           <div class="playlist-toolbar">
             <button id="newPlaylist" class="secondary compact" type="button">New</button>
+            <input id="playlistFolderInput" type="file" accept="audio/mpeg,.mp3" webkitdirectory multiple hidden>
           </div>
           <div id="playlistCreatePanel" class="playlist-create-panel" hidden>
             <form id="playlistCreateForm" class="playlist-create">
@@ -65,6 +89,8 @@
             <button id="shufflePlaylist" class="secondary compact" type="button" hidden>Shuffle</button>
             <button id="deletePlaylist" class="secondary compact icon-only trash-button" type="button" title="Delete playlist" aria-label="Delete playlist" hidden><span></span></button>
           </div>
+          <button id="importPlaylistFolder" class="secondary playlist-import-row" type="button" hidden>Import from path...</button>
+          <p id="playlistImportStatus" class="status"></p>
           <div id="playlistDetail"></div>
         </section>
       </section>
@@ -97,6 +123,14 @@
         <div class="player-controls">
           <img id="artwork" class="player-artwork" alt="" hidden>
           <div class="transport-controls">
+            <button id="autoDJ" class="icon-button auto-dj-button" type="button" disabled title="Enable Auto-DJ" aria-label="Enable Auto-DJ" aria-pressed="false">
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M3 7h3c5 0 7 10 12 10h3"></path>
+                <path d="m18 14 3 3-3 3"></path>
+                <path d="M3 17h3c2.2 0 3.8-1.9 5.3-4.1M14.2 8.8C15.3 7.7 16.5 7 18 7h3"></path>
+                <path d="m18 4 3 3-3 3"></path>
+              </svg>
+            </button>
             <button id="previous" class="icon-button" disabled title="Previous" aria-label="Previous track">
               <span class="previous-icon" aria-hidden="true"></span>
             </button>

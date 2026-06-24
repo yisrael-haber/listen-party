@@ -76,6 +76,22 @@ func TestUserHasRoomPermission(t *testing.T) {
 	}
 }
 
+func TestUserIsRoomAdmin(t *testing.T) {
+	room := Room{ID: "office", AdminGroups: []string{"office-admins"}}
+	if UserIsRoomAdmin(UserInfo{Groups: []string{"staff"}}, room) {
+		t.Fatal("unrelated group received room administration")
+	}
+	if !UserIsRoomAdmin(UserInfo{Groups: []string{"office-admins"}}, room) {
+		t.Fatal("configured group did not receive room administration")
+	}
+	if !UserHasRoomPermission(UserInfo{Groups: []string{"office-admins"}}, room, PermissionPlaybackControl) {
+		t.Fatal("room administrator did not receive room permissions")
+	}
+	if !UserIsRoomAdmin(UserInfo{Role: RoleAdmin}, room) {
+		t.Fatal("global admin did not receive room administration")
+	}
+}
+
 func TestEveryoneRoomGrantAppliesOnlyToAuthenticatedUsers(t *testing.T) {
 	room := Room{ID: "main", Name: "Public Room", Grants: openRoomGrants()}
 	if UserHasRoomPermission(UserInfo{}, room, PermissionQueueAdd) {

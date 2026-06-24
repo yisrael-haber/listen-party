@@ -14,10 +14,13 @@ authentication are stored beside the configuration file.
 - Multiple rooms with independent playback, queue, and history state.
 - Shared play/pause, seek, skip, previous, and play-now controls.
 - Queue add, remove, clear, and drag-and-drop reordering.
+- Optional per-room Auto-DJ playback when the queue is exhausted.
 - Persistent user playlists with owner/admin editing.
+- Native folder selection for importing indexed network-share tracks into playlists.
 - Room permissions for everyone or selected authentication groups.
+- Room administrators delegated through authentication groups.
 - Local username/password authentication and optional Keycloak login.
-- Admin UI for configuration, rooms, permissions, bans, and rescans.
+- Admin UI for global configuration, rooms, room-admin assignment, bans, and rescans.
 - Embedded frontend assets and SQLite storage.
 
 ## Quick Start
@@ -62,9 +65,10 @@ Only application admins can access `/admin`. PocketBase superusers administer
 `/authAdmin`; the two account types are separate.
 
 The admin UI can update music directories, scan workers, banned IPs, rooms, and
-room grants. Room and ban changes apply immediately. Music directory changes
-apply to subsequent scans. Address and authentication provider changes require
-a restart.
+room-administrator groups. Room access grants are managed only from the regular
+application's room settings view. Room and ban changes apply immediately. Music
+directory changes apply to subsequent scans. Address and authentication
+provider changes require a restart.
 
 ## Configuration
 
@@ -93,6 +97,7 @@ A new configuration has this shape:
 ```json
 {
   "version": 1,
+  "revision": 1,
   "addr": "0.0.0.0:8080",
   "music_dirs": ["<config-dir>/music"],
   "scan_workers": 16,
@@ -101,6 +106,7 @@ A new configuration has this shape:
     {
       "id": "main",
       "name": "Public Room",
+      "admin_groups": [],
       "grants": {
         "everyone": [
           "queue_add",
@@ -145,7 +151,7 @@ Application admins implicitly receive every room permission.
 | Permission | Allows |
 | --- | --- |
 | `queue_add` | Add tracks; queue or shuffle playlists |
-| `queue_manage` | Remove, reorder, or clear queued tracks; clear history |
+| `queue_manage` | Remove, reorder, or clear queued tracks; clear history; toggle Auto-DJ |
 | `playback_control` | Play, pause, seek, skip, previous, and play-now |
 
 Example restricted room:
@@ -154,6 +160,7 @@ Example restricted room:
 {
   "id": "office",
   "name": "Office",
+  "admin_groups": ["office-admins"],
   "grants": {
     "staff": ["queue_add"],
     "facilities": [
@@ -168,6 +175,17 @@ Example restricted room:
 Adding an `everyone` grant makes that permission available to every enabled
 user. Removing it does not affect group grants.
 
+Groups listed in `admin_groups` can edit that room's grants from the room
+settings control in the regular application and implicitly receive every
+permission in that room. Application admins administer every room and remain
+responsible for assigning room administrator groups, creating rooms, and
+changing global configuration.
+
+Room administrators can also disconnect active listeners from the listener
+menu. Disconnecting terminates every active tab for that listener, expires the
+browser's application session, and requires a fresh sign-in before listening
+can resume.
+
 ## Playlists
 
 All enabled users can view playlists and create their own. Playlist owners and
@@ -175,6 +193,14 @@ application admins can add tracks, remove tracks, and delete the playlist.
 
 Queueing or shuffling a playlist uses the room's `queue_add` permission.
 Playlist viewing and ownership are independent of room permissions.
+
+Playlist owners and application admins can use **Import from path...** to
+append MP3s from a folder selected with the browser's native directory picker.
+The browser sends only relative filenames, sizes, and modification times;
+audio files are not uploaded. The server imports matches from its existing
+index and reports unmatched or ambiguous files. The selected network share
+must therefore be available to both the browser user's computer and the
+server, though their mount paths may differ.
 
 ## Music Library
 
@@ -241,8 +267,8 @@ library database; handle them as sensitive backups.
 - No separate web server is required.
 - When using a reverse proxy, preserve streaming responses for room updates.
 - Logs are written to stdout/stderr.
-- Room queues, current playback, and history are held in memory and reset when
-  the server restarts. Playlists and library metadata persist.
+- Room queues, current playback, history, and Auto-DJ state are held in memory
+  and reset when the server restarts. Playlists and library metadata persist.
 
 ## Limitations
 

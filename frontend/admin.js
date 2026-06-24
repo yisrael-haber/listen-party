@@ -20,6 +20,7 @@ const scanStatus = document.getElementById("scanStatus");
 let scanStatusTimer = 0;
 let saveFeedbackTimer = 0;
 let roomCounter = 1;
+let configRevision = 0;
 const minimumSaveFeedbackMS = 350;
 
 function setStatus(message, kind = "") {
@@ -40,6 +41,7 @@ function resetSaveButtonAfterDelay() {
 }
 
 function renderConfig(cfg) {
+  configRevision = cfg.revision || 1;
   const auth = cfg.auth?.pocketbase || {};
   const keycloak = auth.keycloak || {};
   configAddr.value = cfg.addr || "";
@@ -60,6 +62,7 @@ function renderConfig(cfg) {
 
 function readConfigForm() {
   return {
+    revision: configRevision,
     addr: configAddr.value.trim(),
     music_dirs: readMusicDirs(),
     banned_ips: readBannedIPs(),
@@ -201,6 +204,7 @@ function renderRooms(rooms) {
 function renderRoomRow(room = {}) {
   const row = document.createElement("div");
   row.className = "room-row";
+  row.roomGrants = cloneGrants(room.grants || {});
   const fields = document.createElement("div");
   fields.className = "room-fields";
   const main = document.createElement("div");
@@ -223,83 +227,10 @@ function renderRoomRow(room = {}) {
   });
 
   main.append(id, name);
-  access.append(grantsEditor(room.grants || {}));
+  access.append(listEditor("Room administrator groups", "room-admin-group", room.admin_groups || [], "Group"));
   fields.append(main, access);
   row.append(fields, remove);
   return row;
-}
-
-function grantsEditor(grants) {
-  const editor = document.createElement("div");
-  editor.className = "list-editor room-grants-editor";
-  const head = document.createElement("div");
-  head.className = "list-editor-head";
-  const label = document.createElement("span");
-  label.textContent = "Room permissions";
-  const add = document.createElement("button");
-  add.className = "secondary compact";
-  add.type = "button";
-  add.textContent = "Add group";
-  head.append(label, add);
-
-  const list = document.createElement("div");
-  list.className = "room-grants";
-  const groupEntries = Object.entries(grants).filter(([group]) => group !== "everyone");
-  list.replaceChildren(
-    renderGrantRow("everyone", grants.everyone || [], true),
-    ...groupEntries.map(([group, permissions]) => renderGrantRow(group, permissions))
-  );
-  add.addEventListener("click", () => {
-    const grant = renderGrantRow("", []);
-    list.append(grant);
-    grant.querySelector(".room-grant-group").focus();
-  });
-  editor.append(head, list);
-  return editor;
-}
-
-function renderGrantRow(group, permissions, builtIn = false) {
-  const row = document.createElement("div");
-  row.className = "room-grant-row";
-  const input = document.createElement("input");
-  input.className = "room-grant-group";
-  input.value = builtIn ? "Everyone" : group;
-  input.dataset.grant = builtIn ? group : "";
-  input.placeholder = "Group";
-  input.setAttribute("aria-label", builtIn ? "Every enabled user" : "Group");
-  input.autocomplete = "off";
-  input.readOnly = builtIn;
-  input.title = builtIn ? "Every enabled user" : "";
-  const permissionList = document.createElement("div");
-  permissionList.className = "room-grant-permissions";
-  permissionList.append(
-    permissionCheckbox("Add to queue", "queue_add", permissions),
-    permissionCheckbox("Manage queue", "queue_manage", permissions),
-    permissionCheckbox("Control playback", "playback_control", permissions)
-  );
-  row.append(input, permissionList);
-  if (!builtIn) {
-    const remove = document.createElement("button");
-    remove.className = "secondary compact";
-    remove.type = "button";
-    remove.textContent = "Remove";
-    remove.addEventListener("click", () => row.remove());
-    row.append(remove);
-  }
-  return row;
-}
-
-function permissionCheckbox(labelText, permission, permissions) {
-  const label = document.createElement("label");
-  label.className = "checkbox-label room-permission";
-  const input = document.createElement("input");
-  input.type = "checkbox";
-  input.dataset.permission = permission;
-  input.checked = permissions.includes(permission);
-  const text = document.createElement("span");
-  text.textContent = labelText;
-  label.append(input, text);
-  return label;
 }
 
 function inputField(labelText, className, value) {
@@ -326,21 +257,13 @@ function readRooms() {
   return [...roomsList.querySelectorAll(".room-row")].map((row) => ({
     id: row.querySelector(".room-id").value.trim(),
     name: row.querySelector(".room-name").value.trim(),
-    grants: readGrants(row),
+    admin_groups: [...row.querySelectorAll(".room-admin-group")].map((input) => input.value.trim()).filter(Boolean),
+    grants: cloneGrants(row.roomGrants),
   }));
 }
 
-function readGrants(room) {
-  const grants = {};
-  for (const row of room.querySelectorAll(".room-grant-row")) {
-    const input = row.querySelector(".room-grant-group");
-    const group = (input.dataset.grant || input.value).trim();
-    if (!group) continue;
-    const permissions = [...row.querySelectorAll("[data-permission]:checked")].map((input) => input.dataset.permission);
-    if (permissions.length === 0) continue;
-    grants[group] = [...new Set([...(grants[group] || []), ...permissions])];
-  }
-  return grants;
+function cloneGrants(grants) {
+  return Object.fromEntries(Object.entries(grants || {}).map(([group, permissions]) => [group, [...permissions]]));
 }
 
 async function api(path, options = {}) {
@@ -437,7 +360,7 @@ configForm.addEventListener("submit", async (event) => {
     configSaveButton.textContent = "Saved";
     configSaveButton.dataset.state = "saved";
   } catch (err) {
-    setStatus("Save failed", "error");
+    setStatus((err.message || "Save failed").trim(), "error");
     configSaveButton.textContent = "Save failed";
     configSaveButton.dataset.state = "error";
     console.error(err);

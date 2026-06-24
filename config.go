@@ -20,6 +20,7 @@ type AuthConfig struct {
 
 type Config struct {
 	Version      int        `json:"version"`
+	Revision     int64      `json:"revision"`
 	Addr         string     `json:"addr"`
 	MusicDirs    []string   `json:"music_dirs"`
 	DatabasePath string     `json:"-"`
@@ -186,6 +187,7 @@ func NewDefaultConfig() (Config, error) {
 func NewDefaultConfigForRoot(configDir string) Config {
 	return Config{
 		Version:      currentConfigVersion,
+		Revision:     1,
 		Addr:         "0.0.0.0:8080",
 		MusicDirs:    []string{filepath.Join(configDir, "music")},
 		DatabasePath: databasePath(configDir),
@@ -248,6 +250,9 @@ func (c *Config) ApplyDefaultsForRoot(configRoot string) error {
 	if c.Version <= 0 {
 		c.Version = currentConfigVersion
 	}
+	if c.Revision <= 0 {
+		c.Revision = 1
+	}
 	c.DatabasePath = databasePath(configRoot)
 	if c.ScanWorkers == 0 {
 		c.ScanWorkers = defaultScanWorkers
@@ -269,6 +274,7 @@ func (c *Config) ApplyDefaultsForRoot(configRoot string) error {
 			c.Rooms[i].Name = c.Rooms[i].ID
 		}
 		c.Rooms[i].Grants = normalizeRoomGrants(c.Rooms[i].Grants)
+		c.Rooms[i].AdminGroups = normalizeConfigList(c.Rooms[i].AdminGroups)
 	}
 	c.Auth.PocketBase.DataDir = appauth.DataDir(configRoot)
 	c.Auth.PocketBase.BootstrapAdminEmail = appauth.DefaultBootstrapAdminEmail()
@@ -298,6 +304,11 @@ func validateRooms(rooms []Room) error {
 		seen[room.ID] = struct{}{}
 		if room.Name == "" {
 			return fmt.Errorf("room %q name is required", room.ID)
+		}
+		for _, group := range room.AdminGroups {
+			if group == "" || group == EveryoneRoomGrant {
+				return fmt.Errorf("room %q has invalid administrator group %q", room.ID, group)
+			}
 		}
 		for group, permissions := range room.Grants {
 			if group == "" {

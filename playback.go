@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -17,6 +18,7 @@ type PlaybackItem struct {
 	DedupeKey   string    `json:"dedupe_key"`
 	At          time.Time `json:"at"`
 	RequestedBy string    `json:"requested_by"`
+	Source      string    `json:"source,omitempty"`
 }
 
 type PlaybackState struct {
@@ -28,7 +30,9 @@ type PlaybackState struct {
 	Queue             []PlaybackItem `json:"queue"`
 	History           []PlaybackItem `json:"history"`
 	Listeners         []string       `json:"listeners"`
+	AutoDJEnabled     bool           `json:"auto_dj_enabled"`
 	ServerTime        time.Time      `json:"server_time"`
+	Disconnect        bool           `json:"-"`
 }
 
 type Playback struct {
@@ -37,18 +41,34 @@ type Playback struct {
 	nextID             int64
 	current            string
 	currentRequestedBy string
+	currentSource      string
 	started            time.Time
 	paused             bool
 	pausePos           int64
 	queue              []PlaybackItem
 	history            []PlaybackItem
+	autoDJEnabled      bool
+	autoDJNext         string
 	notify             map[chan PlaybackState]UserInfo
+	listeners          map[string]*listenerPresence
+	listenerGrace      time.Duration
+	disconnected       map[string]bool
 }
+
+type listenerPresence struct {
+	username    string
+	connections int
+	generation  uint64
+}
+
+const defaultListenerGrace = 10 * time.Second
 
 func NewPlayback(roomID string) *Playback {
 	return &Playback{
-		roomID: roomID,
-		notify: make(map[chan PlaybackState]UserInfo),
+		roomID:        roomID,
+		notify:        make(map[chan PlaybackState]UserInfo),
+		listeners:     make(map[string]*listenerPresence),
+		listenerGrace: defaultListenerGrace,
 	}
 }
 
@@ -57,7 +77,7 @@ func (p *Playback) Add(dedupeKey string, requestedBy string) PlaybackState {
 	defer p.mu.Unlock()
 
 	p.nextID++
-	p.queue = append(p.queue, PlaybackItem{ID: p.nextID, DedupeKey: dedupeKey, At: time.Now(), RequestedBy: requestedBy})
+	p.queue = append(p.queue, PlaybackItem{ID: p.nextID, DedupeKey: dedupeKey, At: time.Now(), RequestedBy: requestedBy, Source: "user"})
 	p.bumpLocked()
 	return p.stateLocked()
 }
@@ -72,7 +92,7 @@ func (p *Playback) AddMany(dedupeKeys []string, requestedBy string) PlaybackStat
 			continue
 		}
 		p.nextID++
-		p.queue = append(p.queue, PlaybackItem{ID: p.nextID, DedupeKey: dedupeKey, At: now, RequestedBy: requestedBy})
+		p.queue = append(p.queue, PlaybackItem{ID: p.nextID, DedupeKey: dedupeKey, At: now, RequestedBy: requestedBy, Source: "user"})
 	}
 	p.bumpLocked()
 	return p.stateLocked()
@@ -100,9 +120,13 @@ func (p *Playback) PlayNow(dedupeKey string, requestedBy string) PlaybackState {
 	defer p.mu.Unlock()
 
 	p.removeQueuedTrackLocked(dedupeKey)
+	if p.autoDJNext == dedupeKey {
+		p.autoDJNext = ""
+	}
 	p.recordCurrentLocked()
 	p.current = dedupeKey
 	p.currentRequestedBy = requestedBy
+	p.currentSource = "user"
 	p.started = time.Now()
 	p.paused = false
 	p.pausePos = 0
@@ -160,12 +184,16 @@ func (p *Playback) Previous() PlaybackState {
 	}
 	item := p.history[0]
 	p.history = p.history[1:]
+	if p.autoDJNext == item.DedupeKey {
+		p.autoDJNext = ""
+	}
 	if p.current != "" {
 		p.nextID++
-		p.queue = append([]PlaybackItem{{ID: p.nextID, DedupeKey: p.current, At: time.Now(), RequestedBy: p.currentRequestedBy}}, p.queue...)
+		p.queue = append([]PlaybackItem{{ID: p.nextID, DedupeKey: p.current, At: time.Now(), RequestedBy: p.currentRequestedBy, Source: p.currentSource}}, p.queue...)
 	}
 	p.current = item.DedupeKey
 	p.currentRequestedBy = item.RequestedBy
+	p.currentSource = item.Source
 	p.started = time.Now()
 	p.paused = false
 	p.pausePos = 0
@@ -271,6 +299,34 @@ func (p *Playback) Snapshot() PlaybackState {
 	return p.stateLocked()
 }
 
+func (p *Playback) ConfigureAutoDJ(enabled bool, candidate string) PlaybackState {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.autoDJEnabled = enabled
+	if enabled {
+		p.autoDJNext = candidate
+	} else {
+		p.autoDJNext = ""
+	}
+	p.bumpLocked()
+	return p.stateLocked()
+}
+
+func (p *Playback) AutoDJCandidate() (bool, string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.autoDJEnabled, p.autoDJNext
+}
+
+func (p *Playback) SetAutoDJCandidateIfEmpty(candidate string) PlaybackState {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.autoDJEnabled && p.autoDJNext == "" {
+		p.autoDJNext = candidate
+	}
+	return p.stateLocked()
+}
+
 func (p *Playback) Notify() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -278,23 +334,74 @@ func (p *Playback) Notify() {
 }
 
 func (p *Playback) Subscribe(listener UserInfo) (<-chan PlaybackState, func()) {
+	ch, cancel, _ := p.SubscribeIfAllowed(listener)
+	return ch, cancel
+}
+
+func (p *Playback) SubscribeIfAllowed(listener UserInfo) (<-chan PlaybackState, func(), bool) {
 	ch := make(chan PlaybackState, 8)
 	p.mu.Lock()
+	if p.disconnected[listenerIdentity(listener)] {
+		close(ch)
+		p.mu.Unlock()
+		return ch, func() {}, false
+	}
 	if p.notify == nil {
 		p.notify = make(map[chan PlaybackState]UserInfo)
 	}
 	p.notify[ch] = listener
+	p.listenerJoinedLocked(listener)
 	ch <- p.stateLocked()
 	p.mu.Unlock()
 
 	return ch, func() {
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		if _, ok := p.notify[ch]; ok {
+		if listener, ok := p.notify[ch]; ok {
 			delete(p.notify, ch)
 			close(ch)
+			p.listenerDepartedLocked(listener)
 		}
+	}, true
+}
+
+func (p *Playback) ListenerDisconnected(listener UserInfo) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.disconnected[listenerIdentity(listener)]
+}
+
+func (p *Playback) DisconnectListener(username string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	username = strings.TrimSpace(username)
+	if p.disconnected == nil {
+		p.disconnected = make(map[string]bool)
 	}
+	disconnected := false
+	disconnectedUsers := make(map[string]struct{})
+	for ch, listener := range p.notify {
+		if !strings.EqualFold(strings.TrimSpace(listener.Username), username) {
+			continue
+		}
+		disconnected = true
+		p.disconnected[listenerIdentity(listener)] = true
+		disconnectedUsers[listenerUserIdentity(listener)] = struct{}{}
+		delete(p.notify, ch)
+		for len(ch) > 0 {
+			<-ch
+		}
+		ch <- PlaybackState{RoomID: p.roomID, Disconnect: true}
+		close(ch)
+	}
+	if disconnected {
+		for identity := range disconnectedUsers {
+			delete(p.listeners, identity)
+		}
+		p.bumpLocked()
+	}
+	return disconnected
 }
 
 func (p *Playback) CloseSubscribers() {
@@ -305,13 +412,27 @@ func (p *Playback) CloseSubscribers() {
 		delete(p.notify, ch)
 		close(ch)
 	}
+	clear(p.listeners)
 }
 
 func (p *Playback) startNextLocked() bool {
 	if len(p.queue) == 0 {
+		if p.autoDJEnabled && p.autoDJNext != "" {
+			p.recordCurrentLocked()
+			p.current = p.autoDJNext
+			p.currentRequestedBy = ""
+			p.currentSource = "auto_dj"
+			p.autoDJNext = ""
+			p.started = time.Now()
+			p.paused = false
+			p.pausePos = 0
+			p.bumpLocked()
+			return true
+		}
 		p.recordCurrentLocked()
 		p.current = ""
 		p.currentRequestedBy = ""
+		p.currentSource = ""
 		p.started = time.Time{}
 		p.paused = false
 		p.pausePos = 0
@@ -320,9 +441,13 @@ func (p *Playback) startNextLocked() bool {
 	}
 	item := p.queue[0]
 	p.queue = p.queue[1:]
+	if p.autoDJNext == item.DedupeKey {
+		p.autoDJNext = ""
+	}
 	p.recordCurrentLocked()
 	p.current = item.DedupeKey
 	p.currentRequestedBy = item.RequestedBy
+	p.currentSource = item.Source
 	p.started = time.Now()
 	p.paused = false
 	p.pausePos = 0
@@ -343,7 +468,7 @@ func (p *Playback) recordCurrentLocked() {
 	if p.current == "" {
 		return
 	}
-	p.history = append([]PlaybackItem{{DedupeKey: p.current, At: time.Now(), RequestedBy: p.currentRequestedBy}}, p.history...)
+	p.history = append([]PlaybackItem{{DedupeKey: p.current, At: time.Now(), RequestedBy: p.currentRequestedBy, Source: p.currentSource}}, p.history...)
 	if len(p.history) > 25 {
 		p.history = p.history[:25]
 	}
@@ -365,29 +490,28 @@ func (p *Playback) stateLocked() PlaybackState {
 	listeners := p.listenersLocked()
 	return PlaybackState{
 		RoomID:            p.roomID,
-		Current:           PlaybackItem{DedupeKey: p.current, At: p.started, RequestedBy: p.currentRequestedBy},
+		Current:           PlaybackItem{DedupeKey: p.current, At: p.started, RequestedBy: p.currentRequestedBy, Source: p.currentSource},
 		StartedAt:         p.started,
 		Paused:            p.paused,
 		PositionAtPauseMS: p.pausePos,
 		Queue:             queue,
 		History:           history,
 		Listeners:         listeners,
+		AutoDJEnabled:     p.autoDJEnabled,
 		ServerTime:        time.Now(),
 	}
 }
 
 func (p *Playback) listenersLocked() []string {
-	seen := make(map[string]string, len(p.notify))
-	for _, listener := range p.notify {
-		key := listener.ID
-		if key == "" {
-			key = listener.Username
-		}
-		if key == "" {
+	seen := make(map[string]string, len(p.listeners))
+	for _, listener := range p.listeners {
+		username := strings.TrimSpace(listener.username)
+		if username == "" {
 			continue
 		}
+		key := strings.ToLower(username)
 		if _, ok := seen[key]; !ok {
-			seen[key] = listener.Username
+			seen[key] = username
 		}
 	}
 	listeners := make([]string, 0, len(seen))
@@ -396,4 +520,66 @@ func (p *Playback) listenersLocked() []string {
 	}
 	slices.Sort(listeners)
 	return listeners
+}
+
+func (p *Playback) listenerJoinedLocked(listener UserInfo) {
+	if p.listeners == nil {
+		p.listeners = make(map[string]*listenerPresence)
+	}
+	identity := listenerUserIdentity(listener)
+	presence := p.listeners[identity]
+	if presence == nil {
+		presence = &listenerPresence{}
+		p.listeners[identity] = presence
+	}
+	presence.username = listener.Username
+	presence.connections++
+	presence.generation++
+}
+
+func (p *Playback) listenerDepartedLocked(listener UserInfo) {
+	identity := listenerUserIdentity(listener)
+	presence := p.listeners[identity]
+	if presence == nil || presence.connections == 0 {
+		return
+	}
+	presence.connections--
+	presence.generation++
+	if presence.connections > 0 {
+		return
+	}
+	generation := presence.generation
+	remove := func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		current := p.listeners[identity]
+		if current != presence || current.connections != 0 || current.generation != generation {
+			return
+		}
+		delete(p.listeners, identity)
+		p.bumpLocked()
+	}
+	if p.listenerGrace <= 0 {
+		delete(p.listeners, identity)
+		p.bumpLocked()
+		return
+	}
+	time.AfterFunc(p.listenerGrace, remove)
+}
+
+func listenerUserIdentity(listener UserInfo) string {
+	if listener.ID != "" {
+		return "id:" + listener.ID
+	}
+	return "username:" + strings.ToLower(strings.TrimSpace(listener.Username))
+}
+
+func listenerIdentity(listener UserInfo) string {
+	if listener.SessionKey != "" {
+		return listener.SessionKey
+	}
+	if listener.ID != "" {
+		return "id:" + listener.ID
+	}
+	return "username:" + listener.Username
 }

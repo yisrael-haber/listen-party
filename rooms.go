@@ -21,10 +21,11 @@ var roomPermissions = []RoomPermission{
 }
 
 type Room struct {
-	ID       string                      `json:"id"`
-	Name     string                      `json:"name"`
-	Grants   map[string][]RoomPermission `json:"grants,omitempty"`
-	Playback *Playback                   `json:"-"`
+	ID          string                      `json:"id"`
+	Name        string                      `json:"name"`
+	AdminGroups []string                    `json:"admin_groups,omitempty"`
+	Grants      map[string][]RoomPermission `json:"grants,omitempty"`
+	Playback    *Playback                   `json:"-"`
 }
 
 type RoomManager struct {
@@ -56,10 +57,11 @@ func (m *RoomManager) Update(configs []Room) {
 			playback = NewPlayback(cfg.ID)
 		}
 		next[cfg.ID] = &Room{
-			ID:       cfg.ID,
-			Name:     cfg.Name,
-			Grants:   cloneRoomGrants(cfg.Grants),
-			Playback: playback,
+			ID:          cfg.ID,
+			Name:        cfg.Name,
+			AdminGroups: append([]string(nil), cfg.AdminGroups...),
+			Grants:      cloneRoomGrants(cfg.Grants),
+			Playback:    playback,
 		}
 		order = append(order, cfg.ID)
 	}
@@ -117,16 +119,17 @@ func (m *RoomManager) List() []Room {
 	for _, id := range m.order {
 		room := m.rooms[id]
 		rooms = append(rooms, Room{
-			ID:     room.ID,
-			Name:   room.Name,
-			Grants: cloneRoomGrants(room.Grants),
+			ID:          room.ID,
+			Name:        room.Name,
+			AdminGroups: append([]string(nil), room.AdminGroups...),
+			Grants:      cloneRoomGrants(room.Grants),
 		})
 	}
 	return rooms
 }
 
 func UserHasRoomPermission(user UserInfo, room Room, permission RoomPermission) bool {
-	if user.Role == RoleAdmin {
+	if UserIsRoomAdmin(user, room) {
 		return true
 	}
 	if (user.ID != "" || user.Username != "") && slices.Contains(room.Grants[EveryoneRoomGrant], permission) {
@@ -134,6 +137,18 @@ func UserHasRoomPermission(user UserInfo, room Room, permission RoomPermission) 
 	}
 	for _, group := range user.Groups {
 		if slices.Contains(room.Grants[group], permission) {
+			return true
+		}
+	}
+	return false
+}
+
+func UserIsRoomAdmin(user UserInfo, room Room) bool {
+	if user.Role == RoleAdmin {
+		return true
+	}
+	for _, group := range user.Groups {
+		if slices.Contains(room.AdminGroups, group) {
 			return true
 		}
 	}

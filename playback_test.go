@@ -4,6 +4,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestQueueWaitsForPlayAndSkipAdvances(t *testing.T) {
@@ -221,6 +222,7 @@ func TestClearHistory(t *testing.T) {
 
 func TestSubscribeUpdatesListenerCount(t *testing.T) {
 	p := NewPlayback("default")
+	p.listenerGrace = 0
 	ch, cancel := p.Subscribe(UserInfo{ID: "user1", Username: "alice"})
 	state := <-ch
 	if len(state.Listeners) != 1 {
@@ -233,6 +235,44 @@ func TestSubscribeUpdatesListenerCount(t *testing.T) {
 	state = p.Snapshot()
 	if len(state.Listeners) != 0 {
 		t.Fatalf("listener count after cancel = %d, want 0", len(state.Listeners))
+	}
+}
+
+func TestListenerPresenceSurvivesTransportReconnect(t *testing.T) {
+	p := NewPlayback("default")
+	p.listenerGrace = 20 * time.Millisecond
+
+	_, cancel := p.Subscribe(UserInfo{ID: "user1", Username: "alice"})
+	cancel()
+	if listeners := p.Snapshot().Listeners; len(listeners) != 1 || listeners[0] != "alice" {
+		t.Fatalf("listeners during reconnect grace = %v, want [alice]", listeners)
+	}
+
+	_, reconnectCancel := p.Subscribe(UserInfo{ID: "user1", Username: "alice"})
+	time.Sleep(30 * time.Millisecond)
+	if listeners := p.Snapshot().Listeners; len(listeners) != 1 || listeners[0] != "alice" {
+		t.Fatalf("listeners after reconnect = %v, want [alice]", listeners)
+	}
+	reconnectCancel()
+
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for len(p.Snapshot().Listeners) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if listeners := p.Snapshot().Listeners; len(listeners) != 0 {
+		t.Fatalf("listeners after grace = %v, want none", listeners)
+	}
+}
+
+func TestListenerNamesAreDeduplicatedAcrossIdentityRepresentations(t *testing.T) {
+	p := NewPlayback("default")
+	_, cancelA := p.Subscribe(UserInfo{ID: "user1", Username: "alice"})
+	defer cancelA()
+	_, cancelB := p.Subscribe(UserInfo{Username: "Alice"})
+	defer cancelB()
+
+	if listeners := p.Snapshot().Listeners; len(listeners) != 1 || listeners[0] != "alice" {
+		t.Fatalf("listeners = %v, want one alice", listeners)
 	}
 }
 
@@ -268,5 +308,81 @@ func TestCloseSubscribersClosesActiveSubscriptions(t *testing.T) {
 	state := p.Snapshot()
 	if len(state.Listeners) != 0 {
 		t.Fatalf("listener count = %d, want 0", len(state.Listeners))
+	}
+}
+
+func TestDisconnectListenerBlocksOnlyTheActiveSession(t *testing.T) {
+	p := NewPlayback("main")
+	listener := UserInfo{ID: "user1", Username: "alice", SessionKey: "session:old"}
+	ch, cancel, allowed := p.SubscribeIfAllowed(listener)
+	defer cancel()
+	if !allowed {
+		t.Fatal("initial listener was rejected")
+	}
+	<-ch
+	if !p.DisconnectListener("alice") {
+		t.Fatal("active listener was not disconnected")
+	}
+	state, ok := <-ch
+	if !ok || !state.Disconnect {
+		t.Fatalf("disconnect event = %#v, open = %v", state, ok)
+	}
+	if _, ok := <-ch; ok {
+		t.Fatal("disconnected subscription remained open")
+	}
+	if _, _, allowed := p.SubscribeIfAllowed(listener); allowed {
+		t.Fatal("disconnected session was allowed to reconnect automatically")
+	}
+	newSession := listener
+	newSession.SessionKey = "session:new"
+	newCh, newCancel, allowed := p.SubscribeIfAllowed(newSession)
+	defer newCancel()
+	if !allowed {
+		t.Fatal("fresh login session was rejected")
+	}
+	<-newCh
+}
+
+func TestAutoDJStartsPreparedTrackOnlyAfterQueueIsExhausted(t *testing.T) {
+	p := NewPlayback("main")
+	p.ConfigureAutoDJ(true, "random")
+	p.Add("queued", "alice")
+	state, err := p.Play()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Current.DedupeKey != "queued" || state.Current.Source != "user" {
+		t.Fatalf("first current = %#v, want queued user track", state.Current)
+	}
+	state = p.Skip()
+	if state.Current.DedupeKey != "random" || state.Current.Source != "auto_dj" || state.Current.RequestedBy != "" {
+		t.Fatalf("auto-dj current = %#v", state.Current)
+	}
+	if _, candidate := p.AutoDJCandidate(); candidate != "" {
+		t.Fatalf("consumed candidate = %q, want empty", candidate)
+	}
+}
+
+func TestDisablingAutoDJClearsPreparedTrack(t *testing.T) {
+	p := NewPlayback("main")
+	p.ConfigureAutoDJ(true, "random")
+	state := p.ConfigureAutoDJ(false, "")
+	if state.AutoDJEnabled {
+		t.Fatal("auto-dj remained enabled")
+	}
+	if _, err := p.Play(); !errors.Is(err, ErrEmptyQueue) {
+		t.Fatalf("play error = %v, want ErrEmptyQueue", err)
+	}
+}
+
+func TestQueuedTrackConsumesMatchingAutoDJCandidate(t *testing.T) {
+	p := NewPlayback("main")
+	p.ConfigureAutoDJ(true, "same")
+	p.Add("same", "alice")
+	if _, err := p.Play(); err != nil {
+		t.Fatal(err)
+	}
+	if _, candidate := p.AutoDJCandidate(); candidate != "" {
+		t.Fatalf("candidate = %q, want consumed", candidate)
 	}
 }

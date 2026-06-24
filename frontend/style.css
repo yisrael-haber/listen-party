@@ -76,7 +76,7 @@ main {
 .user-strip form {
   flex: 0 0 auto;
   display: block;
-  margin-right: clamp(14px, 4vw, 58px);
+  margin-right: 0;
 }
 
 .username {
@@ -96,6 +96,7 @@ main {
   width: auto;
   min-width: 0;
   max-width: 220px;
+  margin-left: auto;
   padding: 5px 28px 5px 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -104,6 +105,20 @@ main {
   font: inherit;
   font-size: 0.86rem;
   text-overflow: ellipsis;
+}
+
+.room-settings-button svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.room-settings-button[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }
 
 .playback-area {
@@ -180,12 +195,30 @@ h1, h2, p {
 }
 
 .listener-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   overflow: hidden;
   padding: 7px 8px;
   color: var(--text);
   font-size: 0.9rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.listener-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.listener-disconnect {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
 }
 
 .listener-item.empty {
@@ -278,6 +311,10 @@ button.compact {
   max-width: none;
   margin: 0;
   padding: 14px;
+}
+
+#libraryPanel[hidden] {
+  display: none;
 }
 
 .library-rail form {
@@ -623,29 +660,6 @@ button.icon-only {
   gap: 10px;
 }
 
-.room-grants {
-  display: grid;
-  gap: 8px;
-}
-
-.room-grant-row {
-  display: grid;
-  grid-template-columns: minmax(140px, 0.8fr) minmax(280px, 1.5fr) auto;
-  align-items: center;
-  gap: 10px;
-}
-
-.room-grant-permissions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-}
-
-.room-permission {
-  white-space: nowrap;
-}
-
 .list-editor-head {
   display: flex;
   align-items: center;
@@ -765,14 +779,131 @@ button.icon-only {
 }
 
 .playlists-view {
-  display: grid;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
   gap: 14px;
+  overflow: hidden;
   min-height: 0;
+}
+
+.playlists-view[hidden] {
+  display: none;
+}
+
+.room-settings-view {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.room-settings-view[hidden] {
+  display: none;
+}
+
+.room-settings-header {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.room-settings-copy {
+  min-width: 0;
+}
+
+.room-settings-header h2 {
+  margin: 2px 0 0;
+  font-size: 1rem;
+}
+
+.room-settings-header .hint {
+  margin-top: 3px;
+}
+
+.room-settings-grants {
+  display: grid;
+  gap: 10px;
+}
+
+.room-settings-grant {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+
+.room-settings-grant-head,
+.room-settings-actions,
+.room-settings-permissions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.room-settings-grant-head input {
+  min-width: 0;
+  flex: 1;
+}
+
+.room-settings-permissions {
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.room-settings-permissions .checkbox-label input {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 3px;
+}
+
+.room-settings-actions {
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.room-settings-actions .status {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-settings-add {
+  display: block;
+  margin: 10px auto 0;
 }
 
 .playlist-toolbar {
   display: flex;
   justify-content: center;
+}
+
+.playlist-import-row {
+  justify-self: stretch;
+  width: 100%;
+  min-height: 54px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  text-align: left;
+}
+
+#playlistImportStatus:empty {
+  display: none;
 }
 
 #newPlaylist {
@@ -820,6 +951,7 @@ button.icon-only {
   grid-template-columns: minmax(0, 1fr) auto auto auto;
   gap: 8px;
   align-items: center;
+  padding-inline: 4px;
 }
 
 .playlist-control-row button {
@@ -882,6 +1014,14 @@ button.icon-only {
 .playlist-items {
   display: grid;
   gap: 8px;
+}
+
+#playlistDetail {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 3px;
+  scrollbar-gutter: stable;
 }
 
 .playlist-items .item {
@@ -1289,6 +1429,21 @@ input[type="range"]:disabled {
   line-height: 1;
 }
 
+.auto-dj-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.auto-dj-button[data-enabled="true"] {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
 .playback-icon {
   display: block;
   width: 18px;
@@ -1409,8 +1564,7 @@ input[type="range"]:disabled {
   }
 
   .room-main-row,
-  .room-access-row,
-  .room-grant-row {
+  .room-access-row {
     grid-template-columns: 1fr;
   }
 

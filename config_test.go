@@ -80,8 +80,9 @@ func TestApplyDefaultsNormalizesRooms(t *testing.T) {
 		MusicDirs:   []string{"/music"},
 		ScanWorkers: defaultScanWorkers,
 		Rooms: []Room{{
-			ID:   " main ",
-			Name: " Main Room ",
+			ID:          " main ",
+			Name:        " Main Room ",
+			AdminGroups: []string{" room-admins ", "room-admins"},
 			Grants: map[string][]RoomPermission{
 				" staff ": {PermissionQueueManage, PermissionQueueManage},
 			},
@@ -92,6 +93,9 @@ func TestApplyDefaultsNormalizesRooms(t *testing.T) {
 	}
 	if cfg.Rooms[0].ID != "main" || cfg.Rooms[0].Name != "Main Room" {
 		t.Fatalf("room = %#v, want trimmed id/name", cfg.Rooms[0])
+	}
+	if !slices.Equal(cfg.Rooms[0].AdminGroups, []string{"room-admins"}) {
+		t.Fatalf("administrator groups = %#v", cfg.Rooms[0].AdminGroups)
 	}
 	permissions := cfg.Rooms[0].Grants["staff"]
 	if len(permissions) != 1 || permissions[0] != PermissionQueueManage {

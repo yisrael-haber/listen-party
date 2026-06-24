@@ -8,6 +8,7 @@ const presenceEl = document.getElementById("presence");
 const presenceButton = document.getElementById("presenceButton");
 const listenerListEl = document.getElementById("listenerList");
 const clearQueueButton = document.getElementById("clearQueue");
+const autoDJButton = document.getElementById("autoDJ");
 const clearHistoryButton = document.getElementById("clearHistory");
 const previousButton = document.getElementById("previous");
 const skipButton = document.getElementById("skip");
@@ -23,6 +24,7 @@ const searchField = document.getElementById("searchField");
 const libraryStatus = document.getElementById("libraryStatus");
 const libraryTab = document.getElementById("libraryTab");
 const playlistsTab = document.getElementById("playlistsTab");
+const libraryPanel = document.getElementById("libraryPanel");
 const libraryViews = document.querySelectorAll(".library-view");
 const playlistsView = document.getElementById("playlistsView");
 const playlistSelect = document.getElementById("playlistSelect");
@@ -34,6 +36,15 @@ const newPlaylistButton = document.getElementById("newPlaylist");
 const playlistCreatePanel = document.getElementById("playlistCreatePanel");
 const playlistCreateForm = document.getElementById("playlistCreateForm");
 const playlistNameInput = document.getElementById("playlistName");
+const importPlaylistFolderButton = document.getElementById("importPlaylistFolder");
+const playlistFolderInput = document.getElementById("playlistFolderInput");
+const playlistImportStatus = document.getElementById("playlistImportStatus");
+const roomSettingsView = document.getElementById("roomSettingsView");
+const roomSettingsGrants = document.getElementById("roomSettingsGrants");
+const roomSettingsStatus = document.getElementById("roomSettingsStatus");
+const saveRoomSettingsButton = document.getElementById("saveRoomSettings");
+const roomSettingsButton = document.getElementById("roomSettingsButton");
+const closeRoomSettingsButton = document.getElementById("closeRoomSettings");
 const currentUserEl = document.getElementById("currentUser");
 const roomSelect = document.getElementById("roomSelect");
 const logoutForm = document.getElementById("logoutForm");
@@ -45,6 +56,8 @@ const searchTextStorageKey = "listen-party.searchText";
 const searchFieldStorageKey = "listen-party.searchField";
 const railModeStorageKey = "listen-party.railMode";
 const playlistStorageKey = "listen-party.selectedPlaylist";
+const minimumRoomSaveFeedbackMS = 450;
+const roomSaveResultVisibleMS = 1400;
 
 let lastState = null;
 let lastStateReceivedAt = 0;
@@ -58,6 +71,8 @@ let queueSortable = null;
 let queueDragActive = false;
 let queueReorderPending = false;
 let pendingQueueState = null;
+let canAdministerCurrentRoom = false;
+let roomSaveFeedbackTimer = 0;
 
 let currentRoomID = decodeURIComponent(location.pathname.match(/^\/rooms\/([^/]+)/)?.[1] || "");
 
@@ -99,6 +114,33 @@ function restoreRailPreferences() {
 function closeEvents() {
   events?.close();
   events = null;
+}
+
+function forceLogout() {
+  closeEvents();
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+  location.replace("/logout");
+}
+
+function connectEvents() {
+  closeEvents();
+  events = new EventSource(`/rooms/${encodeURIComponent(currentRoomID)}/events`);
+  events.addEventListener("state", (event) => {
+    renderState(JSON.parse(event.data));
+  });
+  events.addEventListener("disconnect", () => {
+    forceLogout();
+  });
+	events.addEventListener("error", async () => {
+		try {
+			const info = await api("/api/session");
+			if (info.disconnected?.[currentRoomID]) forceLogout();
+		} catch {
+			// A network outage is not an administrative disconnect.
+		}
+	});
 }
 
 function hasMedia() {
@@ -247,7 +289,7 @@ function renderState(state) {
     artistEl.textContent = "";
   } else {
     trackEl.textContent = trackTitle(currentTrack);
-    renderSubtitle(artistEl, trackContext(currentTrack), current.requested_by);
+    renderSubtitle(artistEl, trackContext(currentTrack), playbackRequester(current));
     loadMedia(currentTrack.id);
     syncAudio(state);
   }
@@ -257,6 +299,11 @@ function renderState(state) {
   const canManageQueue = hasRoomPermission("queue_manage");
   const canControlPlayback = hasRoomPermission("playback_control");
   clearQueueButton.hidden = !canManageQueue || queue.length === 0;
+  autoDJButton.disabled = !canManageQueue;
+  autoDJButton.dataset.enabled = String(Boolean(state.auto_dj_enabled));
+  autoDJButton.setAttribute("aria-pressed", String(Boolean(state.auto_dj_enabled)));
+  autoDJButton.title = state.auto_dj_enabled ? "Disable Auto-DJ" : "Enable Auto-DJ";
+  autoDJButton.setAttribute("aria-label", autoDJButton.title);
   clearHistoryButton.hidden = !canManageQueue || history.length === 0;
   renderPresence(state);
   previousButton.disabled = !canControlPlayback || history.length === 0;
@@ -274,7 +321,29 @@ function renderPresence(state) {
   listenerListEl.replaceChildren(...listeners.map((username) => {
     const item = document.createElement("div");
     item.className = "listener-item";
-    item.textContent = username;
+	const name = document.createElement("span");
+	name.className = "listener-name";
+	name.textContent = username;
+	item.append(name);
+	if (canAdministerCurrentRoom) {
+		const disconnect = document.createElement("button");
+		disconnect.className = "secondary compact listener-disconnect";
+		disconnect.type = "button";
+		disconnect.textContent = "Disconnect";
+		disconnect.addEventListener("click", async () => {
+			disconnect.disabled = true;
+			try {
+				await api(roomAPI("/api/admin/disconnect"), {
+					method: "POST",
+					body: JSON.stringify({username}),
+				});
+			} catch (err) {
+				console.error(err);
+				disconnect.disabled = false;
+			}
+		});
+		item.append(disconnect);
+	}
     return item;
   }));
   if (listeners.length === 0) {
@@ -294,7 +363,7 @@ function renderQueueItem(item) {
   const meta = trackMeta(
     track ? trackTitle(track) : "Unavailable track",
     track ? trackSubtitle(track) : "",
-    item.requested_by
+    playbackRequester(item)
   );
 
   const actions = trackActionGroup([], item.dedupe_key, [
@@ -352,7 +421,11 @@ function handleQueueReorderKey(event, queueItemID) {
 function renderHistoryItem(item) {
 	const track = item.track;
 	const dedupeKey = item.dedupe_key;
-	return trackRow(track || {title: "Unavailable track", dedupe_key: dedupeKey}, standardTrackCommands(dedupeKey), item.requested_by, dedupeKey);
+	return trackRow(track || {title: "Unavailable track", dedupe_key: dedupeKey}, standardTrackCommands(dedupeKey), playbackRequester(item), dedupeKey);
+}
+
+function playbackRequester(item) {
+  return item?.source === "auto_dj" ? "Auto-DJ" : (item?.requested_by || "");
 }
 
 function renderHistory(history) {
@@ -481,15 +554,6 @@ function trackRow(track, commandSpecs, requestedBy = "", dedupeKey = track?.dedu
 
 function addToPlaylistButton(dedupeKey) {
 	const editable = playlists.filter((playlist) => playlist.can_edit);
-	if (editable.length === 0) {
-		const button = document.createElement("button");
-		button.className = "secondary compact playlist-more-button";
-		button.type = "button";
-		setPlaylistButtonContent(button);
-		button.setAttribute("aria-label", "Add to playlist");
-		button.disabled = true;
-		return button;
-	}
 	const wrap = document.createElement("div");
 	wrap.className = "playlist-add-menu";
 	const button = document.createElement("button");
@@ -497,6 +561,11 @@ function addToPlaylistButton(dedupeKey) {
 	button.type = "button";
 	setPlaylistButtonContent(button);
 	button.setAttribute("aria-label", "Add to playlist");
+	if (editable.length === 0) {
+		button.disabled = true;
+		wrap.append(button);
+		return wrap;
+	}
 	button.setAttribute("aria-haspopup", "menu");
 	button.setAttribute("aria-expanded", "false");
 	const menu = document.createElement("div");
@@ -747,18 +816,117 @@ async function loadLibraryStatus() {
 
 function setRailMode(mode, {load = true, persist = true} = {}) {
 	const playlistsActive = mode === "playlists";
+	const libraryActive = !playlistsActive;
 	if (persist) {
-		storageSet(railModeStorageKey, playlistsActive ? "playlists" : "library");
+		storageSet(railModeStorageKey, mode);
 	}
-	libraryTab.classList.toggle("active", !playlistsActive);
+	libraryTab.classList.toggle("active", libraryActive);
 	playlistsTab.classList.toggle("active", playlistsActive);
 	libraryViews.forEach((el) => {
-		el.hidden = playlistsActive;
+		el.hidden = !libraryActive;
 	});
 	playlistsView.hidden = !playlistsActive;
 	if (playlistsActive && load) {
 		loadPlaylists(selectedPlaylistID).catch(console.error);
 	}
+}
+
+async function openRoomSettings() {
+	if (!canAdministerCurrentRoom) return;
+	libraryPanel.hidden = true;
+	roomSettingsView.hidden = false;
+	roomSettingsButton.setAttribute("aria-expanded", "true");
+	try {
+		await loadRoomSettings();
+	} catch (err) {
+		roomSettingsStatus.textContent = err.message || "Could not load room settings";
+	}
+}
+
+function closeRoomSettings() {
+	roomSettingsView.hidden = true;
+	libraryPanel.hidden = false;
+	roomSettingsButton.setAttribute("aria-expanded", "false");
+}
+
+function toggleRoomSettings() {
+	if (roomSettingsView.hidden) {
+		openRoomSettings();
+	} else {
+		closeRoomSettings();
+	}
+}
+
+function roomGrantRow(group, permissions = [], builtIn = false) {
+	const row = document.createElement("div");
+	row.className = "room-settings-grant";
+	const head = document.createElement("div");
+	head.className = "room-settings-grant-head";
+	const input = document.createElement("input");
+	input.className = "room-settings-group";
+	input.value = builtIn ? "Everyone" : group;
+	input.dataset.group = builtIn ? "everyone" : "";
+	input.placeholder = "PocketBase group";
+	input.readOnly = builtIn;
+	head.append(input);
+	if (!builtIn) {
+		const remove = document.createElement("button");
+		remove.className = "secondary compact";
+		remove.type = "button";
+		remove.textContent = "Remove";
+		remove.addEventListener("click", () => row.remove());
+		head.append(remove);
+	}
+	const permissionList = document.createElement("div");
+	permissionList.className = "room-settings-permissions";
+	for (const [value, labelText] of [["queue_add", "Add to queue"], ["queue_manage", "Manage queue"], ["playback_control", "Control playback"]]) {
+		const label = document.createElement("label");
+		label.className = "checkbox-label";
+		const checkbox = document.createElement("input");
+		checkbox.type = "checkbox";
+		checkbox.dataset.permission = value;
+		checkbox.checked = permissions.includes(value);
+		label.append(checkbox, document.createTextNode(` ${labelText}`));
+		permissionList.append(label);
+	}
+	row.append(head, permissionList);
+	return row;
+}
+
+function renderRoomSettings(grants) {
+	const entries = Object.entries(grants || {}).filter(([group]) => group !== "everyone");
+	const list = document.createElement("div");
+	list.className = "room-settings-grants";
+	list.append(roomGrantRow("everyone", grants?.everyone || [], true), ...entries.map(([group, permissions]) => roomGrantRow(group, permissions)));
+	const add = document.createElement("button");
+	add.className = "secondary compact room-settings-add";
+	add.type = "button";
+	add.textContent = "Add group";
+	add.addEventListener("click", () => {
+		const row = roomGrantRow("", []);
+		list.append(row);
+		row.querySelector("input").focus();
+	});
+	roomSettingsGrants.replaceChildren(list, add);
+}
+
+function readRoomSettingsGrants() {
+	const grants = {};
+	for (const row of roomSettingsGrants.querySelectorAll(".room-settings-grant")) {
+		const input = row.querySelector(".room-settings-group");
+		const group = (input.dataset.group || input.value).trim();
+		if (!group) continue;
+		const permissions = [...row.querySelectorAll("[data-permission]:checked")].map((checkbox) => checkbox.dataset.permission);
+		if (permissions.length) grants[group] = [...new Set(permissions)];
+	}
+	return grants;
+}
+
+async function loadRoomSettings() {
+	roomSettingsStatus.textContent = "Loading...";
+	const settings = await api(roomAPI("/api/admin"));
+	renderRoomSettings(settings.grants || {});
+	roomSettingsStatus.textContent = "";
 }
 
 async function loadPlaylists(selectID = selectedPlaylistID) {
@@ -829,6 +997,7 @@ function updatePlaylistActionButtons() {
 	queuePlaylistButton.hidden = !canRun;
 	shufflePlaylistButton.hidden = !canRun;
 	deletePlaylistButton.hidden = !playlist?.can_edit;
+	importPlaylistFolderButton.hidden = !playlist?.can_edit;
 }
 
 function emptyHint(text) {
@@ -858,6 +1027,13 @@ async function loadRooms() {
   roomSelect.value = currentRoomID;
   roomSelect.disabled = rooms.length <= 1;
   currentPermissions = new Set(info.permissions?.[currentRoomID] || []);
+	if (info.disconnected?.[currentRoomID]) {
+		forceLogout();
+		return false;
+	}
+	canAdministerCurrentRoom = Boolean(info.room_administration?.[currentRoomID]);
+	roomSettingsButton.hidden = !canAdministerCurrentRoom;
+	if (!canAdministerCurrentRoom) closeRoomSettings();
   return true;
 }
 
@@ -874,8 +1050,11 @@ async function runSearch() {
 
 libraryTab.addEventListener("click", () => setRailMode("library"));
 playlistsTab.addEventListener("click", () => setRailMode("playlists"));
+roomSettingsButton.addEventListener("click", toggleRoomSettings);
+closeRoomSettingsButton.addEventListener("click", closeRoomSettings);
 
 playlistSelect.addEventListener("change", async () => {
+	playlistImportStatus.textContent = "";
 	selectedPlaylistID = Number(playlistSelect.value);
 	if (!selectedPlaylistID) return;
 	storageSet(playlistStorageKey, selectedPlaylistID);
@@ -920,6 +1099,79 @@ playlistCreateForm.addEventListener("submit", async (event) => {
 	playlistNameInput.value = "";
 	playlistCreatePanel.hidden = true;
 	await loadPlaylists(playlist.id);
+});
+
+importPlaylistFolderButton.addEventListener("click", () => {
+	playlistImportStatus.textContent = "";
+	playlistFolderInput.value = "";
+	playlistFolderInput.click();
+});
+
+playlistFolderInput.addEventListener("change", async () => {
+	const playlist = playlists.find((item) => item.id === selectedPlaylistID);
+	if (!playlist?.can_edit) return;
+	const files = [...playlistFolderInput.files]
+		.filter((file) => file.name.toLowerCase().endsWith(".mp3"))
+		.map((file) => ({
+			relative_path: file.webkitRelativePath || file.name,
+			size: file.size,
+			last_modified_ms: file.lastModified,
+		}));
+	if (files.length === 0) {
+		playlistImportStatus.textContent = "The selected folder contains no MP3 files";
+		return;
+	}
+	importPlaylistFolderButton.disabled = true;
+	playlistImportStatus.textContent = `Matching ${files.length} files...`;
+	try {
+		const result = await api(`/api/playlists/${playlist.id}/import-folder`, {
+			method: "POST",
+			body: JSON.stringify({files}),
+		});
+		if (result.imported > 0) {
+			playlistImportStatus.textContent = "Playlist imported";
+		} else if (result.duplicates > 0) {
+			playlistImportStatus.textContent = "Playlist is already up to date";
+		} else {
+			playlistImportStatus.textContent = "No indexed tracks matched this folder";
+		}
+		await loadPlaylists(playlist.id);
+	} catch (err) {
+		playlistImportStatus.textContent = err.message || "Folder import failed";
+	} finally {
+		importPlaylistFolderButton.disabled = false;
+	}
+});
+
+saveRoomSettingsButton.addEventListener("click", async () => {
+	clearTimeout(roomSaveFeedbackTimer);
+	saveRoomSettingsButton.disabled = true;
+	saveRoomSettingsButton.textContent = "Saving...";
+	roomSettingsStatus.textContent = "Saving...";
+	roomSettingsStatus.title = "";
+	const saveRequest = api(roomAPI("/api/admin/grants"), {
+			method: "PUT",
+			body: JSON.stringify({grants: readRoomSettingsGrants()}),
+		}).then((settings) => ({settings}), (error) => ({error}));
+	const [result] = await Promise.all([saveRequest, new Promise((resolve) => setTimeout(resolve, minimumRoomSaveFeedbackMS))]);
+	if (result.error) {
+		saveRoomSettingsButton.textContent = "Failed";
+		roomSettingsStatus.textContent = "Failed";
+		roomSettingsStatus.title = result.error.message || "Save failed";
+	} else {
+		const settings = result.settings;
+		renderRoomSettings(settings.grants || {});
+		saveRoomSettingsButton.textContent = "Saved";
+		roomSettingsStatus.textContent = "Saved";
+		roomSettingsStatus.title = "";
+		api(roomAPI("/api/state")).then(renderState).catch(console.error);
+	}
+	roomSaveFeedbackTimer = setTimeout(() => {
+		saveRoomSettingsButton.disabled = false;
+		saveRoomSettingsButton.textContent = "Save";
+		roomSettingsStatus.textContent = "";
+		roomSettingsStatus.title = "";
+	}, roomSaveResultVisibleMS);
 });
 
 document.getElementById("searchForm").addEventListener("submit", async (event) => {
@@ -1013,6 +1265,7 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   closePlaylistAddMenus();
+  if (!roomSettingsView.hidden) closeRoomSettings();
   listenerListEl.hidden = true;
   presenceButton.setAttribute("aria-expanded", "false");
 });
@@ -1025,6 +1278,11 @@ renderVolumeButton();
 
 clearQueueButton.addEventListener("click", async () => {
   await command({action: "queue_clear"});
+});
+
+autoDJButton.addEventListener("click", async () => {
+  const enabled = autoDJButton.dataset.enabled !== "true";
+  await command({action: "auto_dj", enabled});
 });
 
 clearHistoryButton.addEventListener("click", async () => {
@@ -1051,11 +1309,7 @@ async function start() {
     return;
   }
 	initQueueSortable();
-  closeEvents();
-  events = new EventSource(`/rooms/${encodeURIComponent(currentRoomID)}/events`);
-  events.addEventListener("state", (event) => {
-    renderState(JSON.parse(event.data));
-  });
+	connectEvents();
 	loadLibraryStatus();
 	loadPlaylists().catch(console.error);
 	runSearch().catch(console.error);

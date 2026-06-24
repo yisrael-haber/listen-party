@@ -106,6 +106,35 @@ func TestSearchOrdersByTitleAscending(t *testing.T) {
 	}
 }
 
+func TestRandomTrackExcludesLogicalKeys(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	for _, name := range []string{"Artist - First.mp3", "Artist - Second.mp3"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lib, err := musiclib.Open(ctx, filepath.Join(t.TempDir(), "tracks.sqlite"), []string{dir}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lib.Close()
+	if err := lib.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tracks, err := lib.Search(ctx, "Artist")
+	if err != nil || len(tracks) != 2 {
+		t.Fatalf("tracks = %#v, err = %v", tracks, err)
+	}
+	got, err := lib.RandomTrack(ctx, []string{tracks[0].DedupeKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DedupeKey != tracks[1].DedupeKey {
+		t.Fatalf("random key = %q, want %q", got.DedupeKey, tracks[1].DedupeKey)
+	}
+}
+
 func TestSearchFieldFiltersTitleArtistAndAlbum(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -147,6 +176,13 @@ func TestSearchFieldFiltersTitleArtistAndAlbum(t *testing.T) {
 	}
 	if len(albumMatches) != 1 || albumMatches[0].Album != "Protection" {
 		t.Fatalf("album search = %#v, want Protection match", albumMatches)
+	}
+	allFieldMatches, err := lib.SearchField(ctx, "massive protection", "")
+	if err != nil {
+		t.Fatalf("search all fields: %v", err)
+	}
+	if len(allFieldMatches) != 1 || allFieldMatches[0].Title != "Blue Line" {
+		t.Fatalf("all-field search = %#v, want Blue Line match", allFieldMatches)
 	}
 }
 
@@ -321,6 +357,68 @@ func TestRemovePlaylistItemAndPlaylist(t *testing.T) {
 		t.Fatalf("delete missing playlist error = %v, want ErrPlaylistNotFound", err)
 	}
 }
+
+func TestImportPlaylistFolderMatchesIndexedManifest(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	dir := filepath.Join(root, "Legacy Friday")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{"01 - First.mp3", "02 - Second.mp3"}
+	manifest := make([]musiclib.FolderManifestFile, 0, len(names)+1)
+	for _, name := range names {
+		data := []byte("contents-" + name)
+		fullPath := filepath.Join(dir, name)
+		if err := os.WriteFile(fullPath, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifest = append(manifest, musiclib.FolderManifestFile{
+			RelativePath: filepath.ToSlash(filepath.Join("Legacy Friday", name)),
+			Size:         len64(data), LastModifiedMS: info.ModTime().UnixMilli(),
+		})
+	}
+	manifest = append(manifest, musiclib.FolderManifestFile{RelativePath: "Legacy Friday/Missing.mp3", Size: 99})
+	lib, err := musiclib.Open(ctx, filepath.Join(t.TempDir(), "tracks.sqlite"), []string{root}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lib.Close()
+	if err := lib.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	playlist, err := lib.CreatePlaylist(ctx, "Friday", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := lib.ImportPlaylistFolder(ctx, playlist.ID, manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Imported != 2 || result.Unmatched != 1 || result.Ambiguous != 0 {
+		t.Fatalf("first import = %#v", result)
+	}
+	result, err = lib.ImportPlaylistFolder(ctx, playlist.ID, manifest[:2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Imported != 0 || result.Duplicates != 2 {
+		t.Fatalf("second import = %#v", result)
+	}
+	playlist, err = lib.GetPlaylist(ctx, playlist.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(playlist.Items) != 2 || playlist.Items[0].Title != "First" || playlist.Items[1].Title != "Second" {
+		t.Fatalf("playlist items = %#v", playlist.Items)
+	}
+}
+
+func len64(value []byte) int64 { return int64(len(value)) }
 
 func TestSQLiteFTS5Available(t *testing.T) {
 	ctx := context.Background()

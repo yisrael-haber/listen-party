@@ -162,8 +162,13 @@ func TestAuthorizedAcceptsSessionCookie(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	req.AddCookie(&http.Cookie{Name: sessionKeyCookieName, Value: "browser-session"})
 	if !svc.Authorized(req, RoleAdmin) {
 		t.Fatal("admin session cookie rejected")
+	}
+	user, ok := svc.CurrentUser(req)
+	if !ok || user.SessionKey != "session:browser-session" {
+		t.Fatalf("session key = %q, authorized = %v", user.SessionKey, ok)
 	}
 }
 
@@ -256,8 +261,12 @@ func TestLoginAuthenticatesEnabledUser(t *testing.T) {
 	if got := rec.Header().Get("Location"); got != "/" {
 		t.Fatalf("location = %q, want /", got)
 	}
-	if len(rec.Result().Cookies()) == 0 {
-		t.Fatal("login did not set a session cookie")
+	cookieNames := map[string]bool{}
+	for _, cookie := range rec.Result().Cookies() {
+		cookieNames[cookie.Name] = true
+	}
+	if !cookieNames[sessionCookieName] || !cookieNames[sessionKeyCookieName] {
+		t.Fatalf("login cookies = %#v", cookieNames)
 	}
 }
 
@@ -293,6 +302,48 @@ func TestLoginRejectsEmailIdentity(t *testing.T) {
 	svc.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestLogoutClearsAuthenticationAndSessionCookies(t *testing.T) {
+	svc, err := Open(Config{
+		DataDir:             filepath.Join(t.TempDir(), "auth"),
+		BootstrapAdminEmail: "admin@listen-party.local",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	req := httptest.NewRequest(http.MethodGet, "/logout", nil)
+	rec := httptest.NewRecorder()
+	svc.Handler().ServeHTTP(rec, req)
+	cleared := map[string]bool{}
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.MaxAge < 0 {
+			cleared[cookie.Name] = true
+		}
+	}
+	if !cleared[sessionCookieName] || !cleared[sessionKeyCookieName] {
+		t.Fatalf("cleared cookies = %#v", cleared)
+	}
+}
+
+func TestSessionCookieKeysAreUniquePerLogin(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/login", nil)
+	keys := make([]string, 0, 2)
+	for range 2 {
+		rec := httptest.NewRecorder()
+		if err := setSessionCookie(rec, req, "same-auth-token"); err != nil {
+			t.Fatal(err)
+		}
+		for _, cookie := range rec.Result().Cookies() {
+			if cookie.Name == sessionKeyCookieName {
+				keys = append(keys, cookie.Value)
+			}
+		}
+	}
+	if len(keys) != 2 || keys[0] == keys[1] {
+		t.Fatalf("session keys = %#v, want two unique values", keys)
 	}
 }
 

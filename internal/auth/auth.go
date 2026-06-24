@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"html/template"
 	"net/http"
@@ -27,15 +30,17 @@ const (
 	defaultAdminEmail    = "admin@listen-party.local"
 	defaultAdminPassword = "admin"
 	sessionCookieName    = "listen_party_auth"
+	sessionKeyCookieName = "listen_party_session"
 	sessionDuration      = 7 * 24 * time.Hour
 	usersCollection      = "users"
 )
 
 type UserInfo struct {
-	ID       string   `json:"id"`
-	Username string   `json:"username"`
-	Role     Role     `json:"role,omitempty"`
-	Groups   []string `json:"groups"`
+	ID         string   `json:"id"`
+	Username   string   `json:"username"`
+	Role       Role     `json:"role,omitempty"`
+	Groups     []string `json:"groups"`
+	SessionKey string   `json:"-"`
 }
 
 var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
@@ -252,10 +257,11 @@ func (s *Service) CurrentUser(r *http.Request) (UserInfo, bool) {
 		role = RoleAdmin
 	}
 	return UserInfo{
-		ID:       record.Id,
-		Username: record.GetString("username"),
-		Role:     role,
-		Groups:   splitMetadataList(record.GetString("groups")),
+		ID:         record.Id,
+		Username:   record.GetString("username"),
+		Role:       role,
+		Groups:     splitMetadataList(record.GetString("groups")),
+		SessionKey: requestSessionKey(r, token),
 	}, true
 }
 
@@ -264,7 +270,9 @@ func bindSessionCookie(app core.App) {
 		Id: "listenPartySessionCookie",
 		Func: func(e *core.RecordAuthRequestEvent) error {
 			if e.Token != "" {
-				setSessionCookie(e.Response, e.Request, e.Token)
+				if err := setSessionCookie(e.Response, e.Request, e.Token); err != nil {
+					return err
+				}
 			}
 			return e.Next()
 		},
@@ -626,7 +634,10 @@ func handleLogin(app core.App, cfg Config, w http.ResponseWriter, r *http.Reques
 		http.Error(w, "failed to create session", http.StatusInternalServerError)
 		return
 	}
-	setSessionCookie(w, r, token)
+	if err := setSessionCookie(w, r, token); err != nil {
+		http.Error(w, "failed to create session", http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r, returnTo, http.StatusFound)
 }
 
@@ -660,7 +671,12 @@ func writeLogin(w http.ResponseWriter, r *http.Request, cfg Config, message stri
 	}
 }
 
-func setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
+func setSessionCookie(w http.ResponseWriter, r *http.Request, token string) error {
+	keyBytes := make([]byte, 32)
+	if _, err := rand.Read(keyBytes); err != nil {
+		return err
+	}
+	expires := time.Now().Add(sessionDuration)
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
@@ -668,21 +684,43 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   r.TLS != nil,
-		Expires:  time.Now().Add(sessionDuration),
+		Expires:  expires,
 	})
-}
-
-func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    "",
+		Name:     sessionKeyCookieName,
+		Value:    base64.RawURLEncoding.EncodeToString(keyBytes),
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   r.TLS != nil,
-		MaxAge:   -1,
-		Expires:  time.Unix(0, 0),
+		Expires:  expires,
 	})
+	return nil
+}
+
+func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	for _, name := range []string{sessionCookieName, sessionKeyCookieName} {
+		http.SetCookie(w, &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   r.TLS != nil,
+			MaxAge:   -1,
+			Expires:  time.Unix(0, 0),
+		})
+	}
+}
+
+func requestSessionKey(r *http.Request, token string) string {
+	if bearerToken(r.Header.Get("Authorization")) == "" {
+		if cookie, err := r.Cookie(sessionKeyCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
+			return "session:" + strings.TrimSpace(cookie.Value)
+		}
+	}
+	sum := sha256.Sum256([]byte(token))
+	return "token:" + base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 func bearerToken(header string) string {

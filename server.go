@@ -21,14 +21,17 @@ import (
 )
 
 type Server struct {
-	Auth       AuthGate
-	AuthRoutes http.Handler
-	Library    *musiclib.Library
-	Rooms      *RoomManager
-	Config     Config
-	ConfigPath string
-	configMu   sync.RWMutex
+	Auth           AuthGate
+	AuthRoutes     http.Handler
+	Library        *musiclib.Library
+	Rooms          *RoomManager
+	Config         Config
+	ConfigPath     string
+	configMu       sync.RWMutex
+	configUpdateMu sync.Mutex
 }
+
+const maxFolderImportFiles = 50_000
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -43,6 +46,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /rooms/{room}/events", requireUser(http.HandlerFunc(s.handleEvents)))
 	mux.Handle("GET /api/session", requireUser(http.HandlerFunc(s.handleSession)))
 	mux.Handle("GET /rooms/{room}/api/state", requireUser(http.HandlerFunc(s.handleState)))
+	mux.Handle("GET /rooms/{room}/api/admin", requireUser(http.HandlerFunc(s.handleRoomAdmin)))
+	mux.Handle("PUT /rooms/{room}/api/admin/grants", requireUser(http.HandlerFunc(s.handleRoomAdminGrants)))
+	mux.Handle("POST /rooms/{room}/api/admin/disconnect", requireUser(http.HandlerFunc(s.handleRoomAdminDisconnect)))
 	mux.Handle("GET /api/search", requireUser(http.HandlerFunc(s.handleSearch)))
 	mux.Handle("GET /api/library", requireUser(http.HandlerFunc(s.handleLibrary)))
 	mux.Handle("GET /api/playlists", requireUser(http.HandlerFunc(s.handlePlaylists)))
@@ -50,6 +56,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/playlists/{id}", requireUser(http.HandlerFunc(s.handlePlaylist)))
 	mux.Handle("DELETE /api/playlists/{id}", requireUser(http.HandlerFunc(s.handlePlaylistDelete)))
 	mux.Handle("POST /api/playlists/{id}/items", requireUser(http.HandlerFunc(s.handlePlaylistAddItem)))
+	mux.Handle("POST /api/playlists/{id}/import-folder", requireUser(http.HandlerFunc(s.handlePlaylistImportFolder)))
 	mux.Handle("DELETE /api/playlists/{id}/items/{item}", requireUser(http.HandlerFunc(s.handlePlaylistRemoveItem)))
 	mux.Handle("POST /rooms/{room}/api/command", requireUser(http.HandlerFunc(s.handleCommand)))
 	mux.Handle("POST /api/admin/rescan", requireAdmin(http.HandlerFunc(s.handleRescan)))
@@ -159,15 +166,23 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	summaries := make([]roomSummary, 0, len(rooms))
 	permissions := make(map[string][]RoomPermission, len(rooms))
+	administration := make(map[string]bool, len(rooms))
+	disconnected := make(map[string]bool, len(rooms))
 	for _, room := range rooms {
 		summaries = append(summaries, roomSummary{ID: room.ID, Name: room.Name})
 		permissions[room.ID] = RoomPermissionsForUser(user, room)
+		administration[room.ID] = UserIsRoomAdmin(user, room)
+		if activeRoom, ok := s.Rooms.Get(room.ID); ok {
+			disconnected[room.ID] = activeRoom.Playback.ListenerDisconnected(user)
+		}
 	}
 	writeJSON(w, map[string]any{
-		"default_room_id": s.Rooms.DefaultID(),
-		"rooms":           summaries,
-		"permissions":     permissions,
-		"user":            user,
+		"default_room_id":     s.Rooms.DefaultID(),
+		"rooms":               summaries,
+		"permissions":         permissions,
+		"room_administration": administration,
+		"disconnected":        disconnected,
+		"user":                user,
 	})
 }
 
@@ -202,11 +217,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ch, cancel, allowed := room.Playback.SubscribeIfAllowed(user)
+	if !allowed {
+		http.Error(w, "session disconnected; sign in again", http.StatusConflict)
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	ch, cancel := room.Playback.Subscribe(user)
 	slog.Info("listener connected", "remote", r.RemoteAddr, "username", user.Username, "room", room.ID, "listener_count", len(room.Playback.Snapshot().Listeners))
 	defer func() {
 		cancel()
@@ -244,6 +263,19 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeEvent(w http.ResponseWriter, r *http.Request, state PlaybackState) bool {
+	if state.Disconnect {
+		if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			slog.Debug("set sse disconnect write deadline", "error", err)
+		}
+		if _, err := fmt.Fprint(w, "event: disconnect\ndata: {}\n\n"); err != nil {
+			slog.Warn("write sse disconnect", "error", err)
+			return false
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		return true
+	}
 	payload, err := s.viewStateForRequest(r, state)
 	if err != nil {
 		slog.Warn("build sse state", "error", err)
@@ -265,8 +297,12 @@ func (s *Server) writeEvent(w http.ResponseWriter, r *http.Request, state Playba
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	room, _, ok := s.roomFromRequest(w, r)
+	room, user, ok := s.roomFromRequest(w, r)
 	if !ok {
+		return
+	}
+	if room.Playback.ListenerDisconnected(user) {
+		http.Error(w, "session disconnected; sign in again", http.StatusConflict)
 		return
 	}
 	state, err := s.viewStateForRequest(r, s.roomSnapshot(r.Context(), room))
@@ -283,7 +319,12 @@ func (s *Server) roomSnapshot(ctx context.Context, room *Room) PlaybackState {
 		return state
 	}
 	slog.Info("auto advancing expired playback", "room", room.ID, "dedupe_key", state.Current.DedupeKey)
-	return room.Playback.Ended(state.Current.DedupeKey)
+	if err := s.prepareAutoDJ(ctx, room); err != nil {
+		slog.Warn("prepare auto-dj during automatic advance", "room", room.ID, "error", err)
+	}
+	state = room.Playback.Ended(state.Current.DedupeKey)
+	s.replenishAutoDJ(ctx, room)
+	return state
 }
 
 func (s *Server) playbackExpired(ctx context.Context, state PlaybackState) bool {
@@ -459,6 +500,44 @@ func (s *Server) handlePlaylistRemoveItem(w http.ResponseWriter, r *http.Request
 	writeJSON(w, s.playlistView(user, playlist))
 }
 
+func (s *Server) handlePlaylistImportFolder(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.Auth.CurrentUser(r)
+	if !ok {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	playlist, err := s.Library.GetPlaylist(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if !userCanEditPlaylist(user, playlist) {
+		http.Error(w, "playlist edit denied", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		Files []musiclib.FolderManifestFile `json:"files"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if len(req.Files) > maxFolderImportFiles {
+		http.Error(w, "folder contains too many files", http.StatusRequestEntityTooLarge)
+		return
+	}
+	result, err := s.Library.ImportPlaylistFolder(r.Context(), id, req.Files)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, result)
+}
+
 func (s *Server) handlePlaylistDelete(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.Auth.CurrentUser(r)
 	if !ok {
@@ -508,10 +587,17 @@ func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &cfg) {
 		return
 	}
+	s.configUpdateMu.Lock()
+	defer s.configUpdateMu.Unlock()
 	s.configMu.RLock()
 	old := s.Config
 	path := s.ConfigPath
 	s.configMu.RUnlock()
+	if cfg.Revision != old.Revision {
+		http.Error(w, "configuration changed; reload before saving", http.StatusConflict)
+		return
+	}
+	cfg.Revision = old.Revision + 1
 
 	if err := cfg.ApplyDefaultsForRoot(filepath.Dir(path)); err != nil {
 		slog.Warn("reject config update", "remote", r.RemoteAddr, "error", err)
@@ -543,6 +629,116 @@ func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, cfg)
 }
 
+func (s *Server) handleRoomAdmin(w http.ResponseWriter, r *http.Request) {
+	room, user, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if !UserIsRoomAdmin(user, *room) {
+		http.Error(w, "room administration denied", http.StatusForbidden)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"id":     room.ID,
+		"name":   room.Name,
+		"grants": cloneRoomGrants(room.Grants),
+	})
+}
+
+func (s *Server) handleRoomAdminGrants(w http.ResponseWriter, r *http.Request) {
+	room, user, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if !UserIsRoomAdmin(user, *room) {
+		http.Error(w, "room administration denied", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		Grants map[string][]RoomPermission `json:"grants"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	s.configUpdateMu.Lock()
+	defer s.configUpdateMu.Unlock()
+
+	s.configMu.RLock()
+	cfg := cloneConfig(s.Config)
+	configPath := s.ConfigPath
+	s.configMu.RUnlock()
+	found := false
+	for i := range cfg.Rooms {
+		if cfg.Rooms[i].ID == room.ID {
+			if !UserIsRoomAdmin(user, cfg.Rooms[i]) {
+				http.Error(w, "room administration denied", http.StatusForbidden)
+				return
+			}
+			cfg.Rooms[i].Grants = normalizeRoomGrants(req.Grants)
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(w, "room not found", http.StatusNotFound)
+		return
+	}
+	cfg.Revision++
+	if err := SaveConfig(configPath, cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.Rooms.Update(cfg.Rooms)
+	s.configMu.Lock()
+	s.Config = cfg
+	s.configMu.Unlock()
+	updated, _ := s.Rooms.Get(room.ID)
+	writeJSON(w, map[string]any{
+		"id":     updated.ID,
+		"name":   updated.Name,
+		"grants": cloneRoomGrants(updated.Grants),
+	})
+}
+
+func (s *Server) handleRoomAdminDisconnect(w http.ResponseWriter, r *http.Request) {
+	room, user, ok := s.roomFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if !UserIsRoomAdmin(user, *room) {
+		http.Error(w, "room administration denied", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		Username string `json:"username"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" {
+		http.Error(w, "username is required", http.StatusBadRequest)
+		return
+	}
+	if !room.Playback.DisconnectListener(req.Username) {
+		http.Error(w, "listener not found", http.StatusNotFound)
+		return
+	}
+	slog.Info("listener disconnected by room administrator", "room", room.ID, "username", req.Username, "administrator", user.Username)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func cloneConfig(cfg Config) Config {
+	cfg.MusicDirs = append([]string(nil), cfg.MusicDirs...)
+	cfg.BannedIPs = append([]string(nil), cfg.BannedIPs...)
+	cfg.Rooms = append([]Room(nil), cfg.Rooms...)
+	for i := range cfg.Rooms {
+		cfg.Rooms[i].AdminGroups = append([]string(nil), cfg.Rooms[i].AdminGroups...)
+		cfg.Rooms[i].Grants = cloneRoomGrants(cfg.Rooms[i].Grants)
+	}
+	return cfg
+}
+
 func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 	room, user, ok := s.roomFromRequest(w, r)
 	if !ok {
@@ -555,6 +751,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		QueueItemID       int64  `json:"queue_item_id"`
 		BeforeQueueItemID int64  `json:"before_queue_item_id"`
 		PositionMS        int64  `json:"position_ms"`
+		Enabled           bool   `json:"enabled"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -569,6 +766,17 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Action {
+	case "auto_dj":
+		if !req.Enabled {
+			s.writeCommandState(w, r, "auto_dj_disable", room, user.Username, room.Playback.ConfigureAutoDJ(false, ""))
+			return
+		}
+		candidate, err := s.autoDJCandidate(r.Context(), room)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		s.writeCommandState(w, r, "auto_dj_enable", room, user.Username, room.Playback.ConfigureAutoDJ(true, candidate))
 	case "queue_add":
 		if req.DedupeKey == "" {
 			http.Error(w, "dedupe_key is required", http.StatusBadRequest)
@@ -627,7 +835,13 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 	case "seek":
 		s.writeCommandState(w, r, "seek", room, user.Username, room.Playback.SeekTo(req.PositionMS))
 	case "skip":
-		s.writeCommandState(w, r, "skip", room, user.Username, room.Playback.Skip())
+		if err := s.prepareAutoDJ(r.Context(), room); err != nil {
+			writeError(w, err)
+			return
+		}
+		state := room.Playback.Skip()
+		s.replenishAutoDJ(r.Context(), room)
+		s.writeCommandState(w, r, "skip", room, user.Username, state)
 	case "history_clear":
 		s.writeCommandState(w, r, "history_clear", room, user.Username, room.Playback.ClearHistory())
 	case "playlist_queue", "playlist_shuffle":
@@ -661,13 +875,69 @@ func permissionForAction(action string) (RoomPermission, bool) {
 	switch action {
 	case "queue_add", "playlist_queue", "playlist_shuffle":
 		return PermissionQueueAdd, true
-	case "queue_remove", "queue_reorder", "queue_clear", "history_clear":
+	case "queue_remove", "queue_reorder", "queue_clear", "history_clear", "auto_dj":
 		return PermissionQueueManage, true
 	case "play", "play_now", "pause", "previous", "seek", "skip":
 		return PermissionPlaybackControl, true
 	default:
 		return "", false
 	}
+}
+
+func (s *Server) prepareAutoDJ(ctx context.Context, room *Room) error {
+	enabled, candidate := room.Playback.AutoDJCandidate()
+	if !enabled {
+		return nil
+	}
+	if candidate != "" {
+		if _, err := s.Library.ResolveDedupeKey(ctx, candidate); err == nil {
+			return nil
+		} else if !errors.Is(err, musiclib.ErrTrackNotFound) {
+			return err
+		}
+		room.Playback.ConfigureAutoDJ(true, "")
+	}
+	track, err := s.autoDJCandidate(ctx, room)
+	if errors.Is(err, musiclib.ErrTrackNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	room.Playback.SetAutoDJCandidateIfEmpty(track)
+	return nil
+}
+
+func (s *Server) replenishAutoDJ(ctx context.Context, room *Room) {
+	enabled, candidate := room.Playback.AutoDJCandidate()
+	if !enabled || candidate != "" {
+		return
+	}
+	track, err := s.autoDJCandidate(ctx, room)
+	if err != nil {
+		slog.Warn("prepare next auto-dj track", "room", room.ID, "error", err)
+		return
+	}
+	room.Playback.SetAutoDJCandidateIfEmpty(track)
+}
+
+func (s *Server) autoDJCandidate(ctx context.Context, room *Room) (string, error) {
+	state := room.Playback.Snapshot()
+	excluded := make([]string, 0, len(state.History)+1)
+	if state.Current.DedupeKey != "" {
+		excluded = append(excluded, state.Current.DedupeKey)
+	}
+	for _, item := range state.History {
+		excluded = append(excluded, item.DedupeKey)
+	}
+	track, err := s.Library.RandomTrack(ctx, excluded)
+	if errors.Is(err, musiclib.ErrTrackNotFound) && len(excluded) > 0 {
+		track, err = s.Library.RandomTrack(ctx, nil)
+	}
+	if err != nil {
+		return "", err
+	}
+	return track.DedupeKey, nil
 }
 
 func pathID(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {

@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	pathpkg "path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,6 +54,19 @@ type PlaylistItem struct {
 	Title      string `json:"title"`
 	Artist     string `json:"artist"`
 	Album      string `json:"album"`
+}
+
+type FolderManifestFile struct {
+	RelativePath   string `json:"relative_path"`
+	Size           int64  `json:"size"`
+	LastModifiedMS int64  `json:"last_modified_ms"`
+}
+
+type PlaylistFolderImport struct {
+	Imported   int `json:"imported"`
+	Duplicates int `json:"duplicates"`
+	Unmatched  int `json:"unmatched"`
+	Ambiguous  int `json:"ambiguous"`
 }
 
 type Media struct {
@@ -862,6 +877,181 @@ func (l *Library) AddPlaylistTrack(ctx context.Context, playlistID int64, dedupe
 	return PlaylistItem{ID: id, PlaylistID: playlistID, Position: position, DedupeKey: track.DedupeKey, MatchKey: track.MatchKey, Title: track.Title, Artist: track.Artist, Album: track.Album}, nil
 }
 
+func (l *Library) ImportPlaylistFolder(ctx context.Context, playlistID int64, files []FolderManifestFile) (PlaylistFolderImport, error) {
+	result := PlaylistFolderImport{}
+	if len(files) == 0 {
+		return result, errors.New("folder contains no MP3 files")
+	}
+	type indexedFile struct {
+		path      string
+		size      int64
+		modTime   int64
+		dedupeKey string
+		matchKey  string
+		title     string
+		artist    string
+		album     string
+	}
+	bySize := make(map[int64][]indexedFile)
+	sizes := make([]int64, 0, len(files))
+	seenSizes := make(map[int64]struct{}, len(files))
+	for _, file := range files {
+		if file.Size < 0 {
+			continue
+		}
+		if _, ok := seenSizes[file.Size]; !ok {
+			seenSizes[file.Size] = struct{}{}
+			sizes = append(sizes, file.Size)
+		}
+	}
+	const sizeQueryBatch = 500
+	for start := 0; start < len(sizes); start += sizeQueryBatch {
+		end := min(start+sizeQueryBatch, len(sizes))
+		placeholders := make([]string, end-start)
+		args := make([]any, end-start)
+		for i, size := range sizes[start:end] {
+			placeholders[i] = "?"
+			args[i] = size
+		}
+		rows, err := l.db.QueryContext(ctx, `SELECT path, size, mod_time, dedupe_key, match_key, title, artist, album FROM tracks WHERE available = 1 AND size IN (`+strings.Join(placeholders, ",")+`)`, args...)
+		if err != nil {
+			return result, err
+		}
+		for rows.Next() {
+			var file indexedFile
+			if err := rows.Scan(&file.path, &file.size, &file.modTime, &file.dedupeKey, &file.matchKey, &file.title, &file.artist, &file.album); err != nil {
+				rows.Close()
+				return result, err
+			}
+			bySize[file.size] = append(bySize[file.size], file)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return result, err
+		}
+		if err := rows.Close(); err != nil {
+			return result, err
+		}
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		return strings.ToLower(files[i].RelativePath) < strings.ToLower(files[j].RelativePath)
+	})
+	matched := make([]indexedFile, 0, len(files))
+	for _, manifest := range files {
+		relative, ok := cleanManifestPath(manifest.RelativePath)
+		if !ok || !isMP3(relative) {
+			result.Unmatched++
+			continue
+		}
+		logical := make(map[string]indexedFile)
+		exactTime := make(map[string]indexedFile)
+		for _, candidate := range bySize[manifest.Size] {
+			if !pathHasSuffix(candidate.path, relative) {
+				continue
+			}
+			logical[candidate.dedupeKey] = candidate
+			if manifest.LastModifiedMS > 0 && candidate.modTime == manifest.LastModifiedMS/1000 {
+				exactTime[candidate.dedupeKey] = candidate
+			}
+		}
+		if len(logical) == 1 {
+			for _, candidate := range logical {
+				matched = append(matched, candidate)
+			}
+			continue
+		}
+		if len(exactTime) == 1 {
+			for _, candidate := range exactTime {
+				matched = append(matched, candidate)
+			}
+			continue
+		}
+		if len(logical) == 0 {
+			result.Unmatched++
+		} else {
+			result.Ambiguous++
+		}
+	}
+
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM playlists WHERE id = ?`, playlistID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+		return result, ErrPlaylistNotFound
+	} else if err != nil {
+		return result, err
+	}
+	existing := make(map[string]struct{})
+	existingRows, err := tx.QueryContext(ctx, `SELECT dedupe_key FROM playlist_items WHERE playlist_id = ?`, playlistID)
+	if err != nil {
+		return result, err
+	}
+	for existingRows.Next() {
+		var key string
+		if err := existingRows.Scan(&key); err != nil {
+			existingRows.Close()
+			return result, err
+		}
+		existing[key] = struct{}{}
+	}
+	if err := existingRows.Err(); err != nil {
+		existingRows.Close()
+		return result, err
+	}
+	if err := existingRows.Close(); err != nil {
+		return result, err
+	}
+	var position int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(position), 0) FROM playlist_items WHERE playlist_id = ?`, playlistID).Scan(&position); err != nil {
+		return result, err
+	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO playlist_items(playlist_id, position, dedupe_key, match_key, title, artist, album) VALUES(?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return result, err
+	}
+	defer stmt.Close()
+	for _, file := range matched {
+		if _, ok := existing[file.dedupeKey]; ok {
+			result.Duplicates++
+			continue
+		}
+		position++
+		if _, err := stmt.ExecContext(ctx, playlistID, position, file.dedupeKey, file.matchKey, file.title, file.artist, file.album); err != nil {
+			return result, err
+		}
+		existing[file.dedupeKey] = struct{}{}
+		result.Imported++
+	}
+	if result.Imported > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE playlists SET updated_at = ? WHERE id = ?`, time.Now().Unix(), playlistID); err != nil {
+			return result, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func cleanManifestPath(value string) (string, bool) {
+	value = strings.ReplaceAll(strings.TrimSpace(value), `\`, "/")
+	cleaned := pathpkg.Clean(value)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || pathpkg.IsAbs(cleaned) {
+		return "", false
+	}
+	return cleaned, true
+}
+
+func pathHasSuffix(indexedPath, relative string) bool {
+	indexed := strings.ReplaceAll(filepath.Clean(indexedPath), `\`, "/")
+	relative = strings.TrimPrefix(relative, "/")
+	return indexed == relative || strings.HasSuffix(indexed, "/"+relative)
+}
+
 func (l *Library) RemovePlaylistItem(ctx context.Context, playlistID, itemID int64) error {
 	_, err := l.db.ExecContext(ctx, `DELETE FROM playlist_items WHERE playlist_id = ? AND id = ?`, playlistID, itemID)
 	return err
@@ -911,6 +1101,33 @@ func (l *Library) ResolvePlaylistTracks(ctx context.Context, playlistID int64) (
 
 func (l *Library) ResolveDedupeKey(ctx context.Context, key string) (Track, error) {
 	row := l.db.QueryRowContext(ctx, `SELECT `+trackSelectColumns+` FROM tracks WHERE available = 1 AND dedupe_key = ? ORDER BY path ASC LIMIT 1`, key)
+	track, err := scanTrack(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Track{}, ErrTrackNotFound
+	}
+	return track, err
+}
+
+func (l *Library) RandomTrack(ctx context.Context, excludeKeys []string) (Track, error) {
+	args := make([]any, 0, len(excludeKeys))
+	filter := ""
+	if len(excludeKeys) > 0 {
+		placeholders := make([]string, len(excludeKeys))
+		for i, key := range excludeKeys {
+			placeholders[i] = "?"
+			args = append(args, key)
+		}
+		filter = " AND dedupe_key NOT IN (" + strings.Join(placeholders, ",") + ")"
+	}
+	row := l.db.QueryRowContext(ctx, `
+SELECT `+trackSelectColumns+` FROM (
+	SELECT `+trackSelectColumns+`, row_number() OVER (PARTITION BY dedupe_key ORDER BY path ASC) AS rn
+	FROM tracks
+	WHERE available = 1`+filter+`
+)
+WHERE rn = 1
+ORDER BY random()
+LIMIT 1`, args...)
 	track, err := scanTrack(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Track{}, ErrTrackNotFound
