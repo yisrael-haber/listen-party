@@ -22,6 +22,8 @@ const durationEl = document.getElementById("duration");
 const muteButton = document.getElementById("mute");
 const volumeInput = document.getElementById("volume");
 const volumeModeButton = document.getElementById("volumeMode");
+const queueChangesButton = document.getElementById("queueChangesButton");
+const queueChangesListEl = document.getElementById("queueChangesList");
 const searchInput = document.getElementById("q");
 const searchField = document.getElementById("searchField");
 const libraryStatus = document.getElementById("libraryStatus");
@@ -343,12 +345,56 @@ function renderState(state) {
   renderVolumeControl();
   clearHistoryButton.hidden = !canManageQueue || history.length === 0;
   renderPresence(state);
+  renderQueueChanges(state.actions || []);
   previousButton.disabled = !canControlPlayback || history.length === 0;
   skipButton.disabled = !canControlPlayback;
   togglePlaybackButton.disabled = !canControlPlayback || (!currentTrack && queue.length === 0);
   refreshPermissionControls();
   updateQueueSortable();
   renderPlaybackButton(Boolean(currentTrack && !state.paused));
+}
+
+function renderQueueChanges(actions) {
+  queueChangesButton.dataset.empty = String(actions.length === 0);
+  queueChangesButton.textContent = actions.length ? `Queue changes ${actions.length}` : "Queue changes";
+  queueChangesListEl.replaceChildren(...actions.map((action) => {
+    const item = document.createElement("div");
+    item.className = "queue-change-item";
+
+    const meta = document.createElement("div");
+    meta.className = "queue-change-meta";
+    const metadata = [
+      [formatActionTime(action.at), "queue-change-time"],
+      [action.ip, "queue-change-ip"],
+      [action.username, "queue-change-username"],
+    ];
+    for (const [value, className] of metadata) {
+      if (!value) continue;
+      const field = document.createElement("span");
+      field.className = className;
+      field.textContent = value;
+      meta.append(field);
+    }
+
+    const text = document.createElement("div");
+    text.className = "queue-change-text";
+    text.textContent = action.text || "";
+
+    item.append(meta, text);
+    return item;
+  }));
+  if (actions.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "queue-change-empty";
+    empty.textContent = "No queue changes yet";
+    queueChangesListEl.append(empty);
+  }
+}
+
+function formatActionTime(value) {
+  const time = Date.parse(value || "");
+  if (!Number.isFinite(time)) return "";
+  return new Intl.DateTimeFormat(undefined, {hour: "2-digit", minute: "2-digit"}).format(new Date(time));
 }
 
 function renderPresence(state) {
@@ -1389,9 +1435,19 @@ presenceButton.addEventListener("click", () => {
   presenceButton.setAttribute("aria-expanded", String(nextOpen));
 });
 
+queueChangesButton.addEventListener("click", () => {
+  const nextOpen = queueChangesListEl.hidden;
+  queueChangesListEl.hidden = !nextOpen;
+  queueChangesButton.setAttribute("aria-expanded", String(nextOpen));
+});
+
 document.addEventListener("click", (event) => {
   closePlaylistAddMenus();
   if (!event.target.closest(".auto-dj-control")) closeAutoDJSourceMenu();
+  if (!event.target.closest(".queue-changes-menu")) {
+    queueChangesListEl.hidden = true;
+    queueChangesButton.setAttribute("aria-expanded", "false");
+  }
   if (event.target.closest(".presence-menu")) {
     return;
   }
@@ -1408,6 +1464,8 @@ document.addEventListener("keydown", (event) => {
   if (!roomSettingsView.hidden) closeRoomSettings();
   listenerListEl.hidden = true;
   presenceButton.setAttribute("aria-expanded", "false");
+  queueChangesListEl.hidden = true;
+  queueChangesButton.setAttribute("aria-expanded", "false");
 });
 
 restoreSearchPreferences();

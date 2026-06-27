@@ -42,6 +42,13 @@ type RoomAudio struct {
 	Muted  bool    `json:"muted"`
 }
 
+type RoomAction struct {
+	At       time.Time `json:"at"`
+	IP       string    `json:"ip"`
+	Username string    `json:"username"`
+	Text     string    `json:"text"`
+}
+
 func defaultAutoDJSource() AutoDJSource {
 	return AutoDJSource{Type: AutoDJSourceLibrary, Name: "Entire Library"}
 }
@@ -57,6 +64,7 @@ type PlaybackState struct {
 	Listeners         []string       `json:"listeners"`
 	AutoDJ            AutoDJState    `json:"auto_dj"`
 	RoomAudio         RoomAudio      `json:"room_audio"`
+	Actions           []RoomAction   `json:"actions"`
 	ServerTime        time.Time      `json:"server_time"`
 	Disconnect        bool           `json:"-"`
 }
@@ -78,6 +86,7 @@ type Playback struct {
 	autoDJEntries      []int64
 	autoDJPreparing    bool
 	roomAudio          RoomAudio
+	actions            []RoomAction
 	notify             map[chan PlaybackState]UserInfo
 	listeners          map[string]*listenerPresence
 	listenerGrace      time.Duration
@@ -93,6 +102,7 @@ type listenerPresence struct {
 }
 
 const defaultListenerGrace = 10 * time.Second
+const maxRoomActions = 20
 
 func NewPlayback(roomID string) *Playback {
 	return &Playback{
@@ -337,6 +347,20 @@ func (p *Playback) SetRoomAudio(volume float64, muted bool) PlaybackState {
 func (p *Playback) Snapshot() PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.stateLocked()
+}
+
+func (p *Playback) AddAction(action RoomAction) PlaybackState {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if action.At.IsZero() {
+		action.At = time.Now()
+	}
+	p.actions = append([]RoomAction{action}, p.actions...)
+	if len(p.actions) > maxRoomActions {
+		p.actions = p.actions[:maxRoomActions]
+	}
+	p.bumpLocked()
 	return p.stateLocked()
 }
 
@@ -636,6 +660,7 @@ func (p *Playback) bumpLocked() {
 func (p *Playback) stateLocked() PlaybackState {
 	queue := append([]PlaybackItem(nil), p.queue...)
 	history := append([]PlaybackItem(nil), p.history...)
+	actions := append([]RoomAction(nil), p.actions...)
 	listeners := p.listenersLocked()
 	return PlaybackState{
 		RoomID:            p.roomID,
@@ -648,6 +673,7 @@ func (p *Playback) stateLocked() PlaybackState {
 		Listeners:         listeners,
 		AutoDJ:            p.autoDJ,
 		RoomAudio:         p.roomAudio,
+		Actions:           actions,
 		ServerTime:        time.Now(),
 	}
 }

@@ -207,6 +207,107 @@ func TestQueueReorderUsesStableQueueItemIDs(t *testing.T) {
 	}
 }
 
+func TestRoomActionLogRecordsQueueRemoveReorderAndSkip(t *testing.T) {
+	server, tracks := actionLogTestServer(t)
+	room, _ := server.Rooms.Get("main")
+
+	room.Playback.Add(tracks["First"].DedupeKey, "alice")
+	state := room.Playback.Add(tracks["Second"].DedupeKey, "alice")
+	removeBody := fmt.Sprintf(`{"action":"queue_remove","queue_item_id":%d}`, state.Queue[1].ID)
+	view := postCommand(t, server, removeBody)
+	if len(view.Actions) != 1 {
+		t.Fatalf("actions after remove = %#v", view.Actions)
+	}
+	if action := view.Actions[0]; action.IP != "192.168.1.44" || action.Username != "alice" || action.Text != `Removed "Second" from the queue.` || action.At.IsZero() {
+		t.Fatalf("remove action = %#v", action)
+	}
+
+	server, tracks = actionLogTestServer(t)
+	room, _ = server.Rooms.Get("main")
+	room.Playback.Add(tracks["First"].DedupeKey, "alice")
+	room.Playback.Add(tracks["Second"].DedupeKey, "alice")
+	state = room.Playback.Add(tracks["Third"].DedupeKey, "alice")
+	reorderBody := fmt.Sprintf(`{"action":"queue_reorder","queue_item_id":%d,"before_queue_item_id":%d}`, state.Queue[2].ID, state.Queue[0].ID)
+	view = postCommand(t, server, reorderBody)
+	if action := view.Actions[0]; action.Text != `Moved "Third" before "First" in the queue.` {
+		t.Fatalf("reorder action = %#v", action)
+	}
+
+	server, tracks = actionLogTestServer(t)
+	room, _ = server.Rooms.Get("main")
+	room.Playback.PlayNow(tracks["First"].DedupeKey, "alice")
+	room.Playback.Add(tracks["Second"].DedupeKey, "alice")
+	view = postCommand(t, server, `{"action":"skip"}`)
+	if action := view.Actions[0]; action.Text != `Skipped "First".` {
+		t.Fatalf("skip action = %#v", action)
+	}
+}
+
+func TestRoomActionLogRecordsPlayNowOnlyWhenReplacingActiveTrack(t *testing.T) {
+	server, tracks := actionLogTestServer(t)
+	room, _ := server.Rooms.Get("main")
+
+	view := postCommand(t, server, fmt.Sprintf(`{"action":"play_now","dedupe_key":%q}`, tracks["First"].DedupeKey))
+	if len(view.Actions) != 0 {
+		t.Fatalf("actions after initial play now = %#v", view.Actions)
+	}
+
+	view = postCommand(t, server, fmt.Sprintf(`{"action":"play_now","dedupe_key":%q}`, tracks["Second"].DedupeKey))
+	if len(view.Actions) != 1 {
+		t.Fatalf("actions after replacing active track = %#v", view.Actions)
+	}
+	if action := view.Actions[0]; action.Text != `Played "Second" now, replacing "First".` || action.IP != "192.168.1.44" || action.Username != "alice" {
+		t.Fatalf("play now action = %#v", action)
+	}
+	if state := room.Playback.Snapshot(); state.Current.DedupeKey != tracks["Second"].DedupeKey {
+		t.Fatalf("current track = %q, want Second", state.Current.DedupeKey)
+	}
+}
+
+func TestRoomActionLogRecordsQueueClearWithoutListingTracks(t *testing.T) {
+	server, tracks := actionLogTestServer(t)
+	room, _ := server.Rooms.Get("main")
+	room.Playback.Add(tracks["First"].DedupeKey, "alice")
+	room.Playback.Add(tracks["Second"].DedupeKey, "alice")
+
+	view := postCommand(t, server, `{"action":"queue_clear"}`)
+	if len(view.Actions) != 1 {
+		t.Fatalf("actions after queue clear = %#v", view.Actions)
+	}
+	if action := view.Actions[0]; action.Text != "Cleared the queue." || action.IP != "192.168.1.44" || action.Username != "alice" {
+		t.Fatalf("queue clear action = %#v", action)
+	}
+	if len(view.Queue) != 0 {
+		t.Fatalf("queue after clear = %#v", view.Queue)
+	}
+
+	view = postCommand(t, server, `{"action":"queue_clear"}`)
+	if len(view.Actions) != 1 {
+		t.Fatalf("empty queue clear added an action: %#v", view.Actions)
+	}
+}
+
+func TestRoomActionLogVisibleWithoutRoomPermissions(t *testing.T) {
+	server, _ := actionLogTestServer(t)
+	room, _ := server.Rooms.Get("main")
+	room.Playback.AddAction(RoomAction{IP: "192.168.1.44", Username: "alice", Text: `Removed "First" from the queue.`})
+	server.Auth = fakeAuth{user: UserInfo{Username: "bob"}}
+
+	req := httptest.NewRequest(http.MethodGet, "/rooms/main/api/state", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var view ViewState
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Actions) != 1 || view.Actions[0].Text != `Removed "First" from the queue.` {
+		t.Fatalf("actions = %#v", view.Actions)
+	}
+}
+
 func TestPermissionForActionKeepsCapabilitiesIndependent(t *testing.T) {
 	for _, action := range []string{"queue_add"} {
 		if permission, ok := permissionForAction(action); !ok || permission != PermissionQueueAdd {
@@ -662,6 +763,63 @@ func queueTestServer(lib *musiclib.Library) *Server {
 			Grants: map[string][]RoomPermission{"staff": {PermissionQueueAdd}},
 		}}},
 	})
+}
+
+func actionLogTestServer(t *testing.T) (*Server, map[string]musiclib.Track) {
+	t.Helper()
+	ctx := context.Background()
+	dir := t.TempDir()
+	for _, title := range []string{"First", "Second", "Third"} {
+		if err := os.WriteFile(filepath.Join(dir, "Artist - "+title+".mp3"), []byte(title), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lib, err := musiclib.Open(ctx, filepath.Join(t.TempDir(), "tracks.sqlite"), []string{dir}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lib.Close() })
+	if err := lib.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tracks, err := lib.Search(ctx, "Artist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := make(map[string]musiclib.Track, len(tracks))
+	for _, track := range tracks {
+		byTitle[track.Title] = track
+	}
+	for _, title := range []string{"First", "Second", "Third"} {
+		if byTitle[title].DedupeKey == "" {
+			t.Fatalf("missing indexed track %q in %#v", title, byTitle)
+		}
+	}
+	server := testServer(&Server{
+		Auth:    fakeAuth{user: UserInfo{Username: "alice", Groups: []string{"staff"}}},
+		Library: lib,
+		Config: Config{Rooms: []Room{{
+			ID: "main", Name: "Main Room",
+			Grants: map[string][]RoomPermission{"staff": {PermissionQueueManage, PermissionPlaybackControl}},
+		}}},
+	})
+	return server, byTitle
+}
+
+func postCommand(t *testing.T, server *Server, body string) ViewState {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/rooms/main/api/command", strings.NewReader(body))
+	req.RemoteAddr = "192.168.1.44:55123"
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("command %s status = %d: %s", body, rec.Code, rec.Body.String())
+	}
+	var view ViewState
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	return view
 }
 
 func testServer(s *Server) *Server {

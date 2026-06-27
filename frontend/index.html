@@ -10,22 +10,30 @@
   <main class="app-shell">
     <aside class="library-rail">
       <div class="user-strip">
-        <span id="currentUser" class="username"></span>
-        <form id="logoutForm" action="/logout" method="post">
-          <button class="secondary compact" type="submit">Logout</button>
-        </form>
-        <select id="roomSelect" class="room-select" aria-label="Room"></select>
-        <div class="presence-menu">
-          <button id="presenceButton" class="secondary compact" type="button" aria-expanded="false" aria-controls="listenerList">
-            <span id="presence" class="status"></span>
-          </button>
-          <div id="listenerList" class="listener-popover" hidden></div>
+        <div class="user-session">
+          <span id="currentUser" class="username"></span>
+          <form id="logoutForm" action="/logout" method="post">
+            <button class="secondary compact" type="submit">Logout</button>
+          </form>
         </div>
-        <button id="roomSettingsButton" class="secondary compact icon-only room-settings-button" type="button" title="Room settings" aria-label="Room settings" aria-controls="roomSettingsView" aria-expanded="false" hidden>
-          <svg aria-hidden="true" viewBox="0 0 24 24">
-            <path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"></path>
-          </svg>
-        </button>
+        <select id="roomSelect" class="room-select" aria-label="Room"></select>
+        <div class="room-control-cluster">
+          <div class="queue-changes-menu">
+            <button id="queueChangesButton" class="secondary compact queue-changes-button" type="button" aria-expanded="false" aria-controls="queueChangesList">Queue changes</button>
+            <div id="queueChangesList" class="queue-changes-popover" hidden></div>
+          </div>
+          <div class="presence-menu">
+            <button id="presenceButton" class="secondary compact" type="button" aria-expanded="false" aria-controls="listenerList">
+              <span id="presence" class="status"></span>
+            </button>
+            <div id="listenerList" class="listener-popover" hidden></div>
+          </div>
+          <button id="roomSettingsButton" class="secondary compact icon-only room-settings-button" type="button" title="Room settings" aria-label="Room settings" aria-controls="roomSettingsView" aria-expanded="false" hidden>
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"></path>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <section id="roomSettingsView" class="room-settings-view" hidden>

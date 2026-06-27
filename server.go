@@ -842,7 +842,13 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "queue_item_id is required", http.StatusBadRequest)
 			return
 		}
-		s.writeCommandState(w, r, "queue_remove", room, user.Username, room.Playback.Remove(req.QueueItemID))
+		before := room.Playback.Snapshot()
+		removed, ok := queueItemByID(before.Queue, req.QueueItemID)
+		state := room.Playback.Remove(req.QueueItemID)
+		if ok && len(state.Queue) != len(before.Queue) {
+			state = s.recordRoomAction(r, room, user.Username, fmt.Sprintf("Removed %q from the queue.", s.trackActionName(r.Context(), removed.DedupeKey)))
+		}
+		s.writeCommandState(w, r, "queue_remove", room, user.Username, state)
 	case "queue_reorder":
 		if req.QueueItemID <= 0 {
 			http.Error(w, "queue_item_id is required", http.StatusBadRequest)
@@ -852,14 +858,30 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "before_queue_item_id must not be negative", http.StatusBadRequest)
 			return
 		}
+		before := room.Playback.Snapshot()
+		moved, movedOK := queueItemByID(before.Queue, req.QueueItemID)
+		target, targetOK := queueItemByID(before.Queue, req.BeforeQueueItemID)
 		state, err := room.Playback.Reorder(req.QueueItemID, req.BeforeQueueItemID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
+		if movedOK && queueOrderChanged(before.Queue, state.Queue) {
+			movedName := s.trackActionName(r.Context(), moved.DedupeKey)
+			if req.BeforeQueueItemID == 0 {
+				state = s.recordRoomAction(r, room, user.Username, fmt.Sprintf("Moved %q to the end of the queue.", movedName))
+			} else if targetOK {
+				state = s.recordRoomAction(r, room, user.Username, fmt.Sprintf("Moved %q before %q in the queue.", movedName, s.trackActionName(r.Context(), target.DedupeKey)))
+			}
+		}
 		s.writeCommandState(w, r, "queue_reorder", room, user.Username, state)
 	case "queue_clear":
-		s.writeCommandState(w, r, "queue_clear", room, user.Username, room.Playback.Clear())
+		before := room.Playback.Snapshot()
+		state := room.Playback.Clear()
+		if len(before.Queue) > 0 {
+			state = s.recordRoomAction(r, room, user.Username, "Cleared the queue.")
+		}
+		s.writeCommandState(w, r, "queue_clear", room, user.Username, state)
 	case "play":
 		state, err := room.Playback.Play()
 		if err != nil {
@@ -873,11 +895,17 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "dedupe_key is required", http.StatusBadRequest)
 			return
 		}
-		if _, err := s.Library.ResolveDedupeKey(r.Context(), req.DedupeKey); err != nil {
+		track, err := s.Library.ResolveDedupeKey(r.Context(), req.DedupeKey)
+		if err != nil {
 			writeError(w, err)
 			return
 		}
-		s.writeCommandState(w, r, "play_now", room, user.Username, room.Playback.PlayNow(req.DedupeKey, user.Username))
+		before := room.Playback.Snapshot()
+		state := room.Playback.PlayNow(req.DedupeKey, user.Username)
+		if before.Current.DedupeKey != "" {
+			state = s.recordRoomAction(r, room, user.Username, fmt.Sprintf("Played %q now, replacing %q.", trackActionTitle(track), s.trackActionName(r.Context(), before.Current.DedupeKey)))
+		}
+		s.writeCommandState(w, r, "play_now", room, user.Username, state)
 	case "pause":
 		s.writeCommandState(w, r, "pause", room, user.Username, room.Playback.Pause())
 	case "room_audio":
@@ -891,16 +919,80 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 	case "seek":
 		s.writeCommandState(w, r, "seek", room, user.Username, room.Playback.SeekTo(req.PositionMS))
 	case "skip":
+		before := room.Playback.Snapshot()
 		if err := s.prepareAutoDJ(r.Context(), room); err != nil {
 			writeError(w, err)
 			return
 		}
 		state := room.Playback.Skip()
 		s.replenishAutoDJ(r.Context(), room)
+		if before.Current.DedupeKey != "" {
+			state = s.recordRoomAction(r, room, user.Username, s.skipActionText(r.Context(), before.Current.DedupeKey, state.Current.DedupeKey))
+		}
 		s.writeCommandState(w, r, "skip", room, user.Username, state)
 	case "history_clear":
 		s.writeCommandState(w, r, "history_clear", room, user.Username, room.Playback.ClearHistory())
 	}
+}
+
+func queueItemByID(queue []PlaybackItem, id int64) (PlaybackItem, bool) {
+	if id <= 0 {
+		return PlaybackItem{}, false
+	}
+	for _, item := range queue {
+		if item.ID == id {
+			return item, true
+		}
+	}
+	return PlaybackItem{}, false
+}
+
+func queueOrderChanged(before, after []PlaybackItem) bool {
+	if len(before) != len(after) {
+		return true
+	}
+	for i := range before {
+		if before[i].ID != after[i].ID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) recordRoomAction(r *http.Request, room *Room, username, text string) PlaybackState {
+	ip := ""
+	if parsedIP, ok := clientIP(r.RemoteAddr); ok {
+		ip = parsedIP.String()
+	}
+	return room.Playback.AddAction(RoomAction{
+		IP:       ip,
+		Username: username,
+		Text:     text,
+	})
+}
+
+func (s *Server) skipActionText(ctx context.Context, previousKey, _ string) string {
+	previousName := s.trackActionName(ctx, previousKey)
+	return fmt.Sprintf("Skipped %q.", previousName)
+}
+
+func (s *Server) trackActionName(ctx context.Context, dedupeKey string) string {
+	if dedupeKey == "" || s.Library == nil {
+		return "Unavailable track"
+	}
+	track, err := s.Library.ResolveDedupeKey(ctx, dedupeKey)
+	if err != nil {
+		return "Unavailable track"
+	}
+	return trackActionTitle(track)
+}
+
+func trackActionTitle(track musiclib.Track) string {
+	title := strings.TrimSpace(track.Title)
+	if title == "" {
+		return "Track"
+	}
+	return title
 }
 
 func permissionForAction(action string) (RoomPermission, bool) {
