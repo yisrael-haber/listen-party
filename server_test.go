@@ -11,9 +11,73 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/tcolgate/mp3"
 
 	musiclib "listen-party/internal/library"
 )
+
+func TestServerTimerAdvancesAndPausePreventsStaleAdvance(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	for _, name := range []string{"Artist - First.mp3", "Artist - Second.mp3"} {
+		if err := os.WriteFile(filepath.Join(dir, name), testMP3Frames(12), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	databasePath := filepath.Join(t.TempDir(), "tracks.sqlite")
+	lib, err := musiclib.Open(ctx, databasePath, []string{dir}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lib.Close()
+	if err := lib.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tracks, err := lib.Search(ctx, "Artist")
+	if err != nil || len(tracks) != 2 {
+		t.Fatalf("tracks = %#v, err = %v", tracks, err)
+	}
+	server := testServer(&Server{
+		Auth:    fakeAuth{user: UserInfo{Username: "alice", Groups: []string{"staff"}}},
+		Library: lib,
+		Config: Config{Rooms: []Room{{
+			ID: "main", Name: "Main", Grants: map[string][]RoomPermission{
+				"staff": {PermissionQueueAdd, PermissionPlaybackControl},
+			},
+		}}},
+	})
+	defer server.Rooms.Close()
+
+	postCommand(t, server, fmt.Sprintf(`{"action":"play_now","dedupe_key":%q}`, tracks[0].DedupeKey))
+	postCommand(t, server, fmt.Sprintf(`{"action":"queue_add","dedupe_key":%q}`, tracks[1].DedupeKey))
+	time.Sleep(50 * time.Millisecond)
+	paused := postCommand(t, server, `{"action":"pause"}`)
+	time.Sleep(350 * time.Millisecond)
+	room, _ := server.Rooms.Get("main")
+	state := room.Playback.Snapshot()
+	if !state.Paused || state.Current.DedupeKey != paused.Current.DedupeKey {
+		t.Fatalf("paused playback advanced: %#v", state)
+	}
+	postCommand(t, server, `{"action":"play"}`)
+	deadline := time.Now().Add(time.Second)
+	for state.Current.DedupeKey == paused.Current.DedupeKey && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		state = room.Playback.Snapshot()
+	}
+	if state.Current.DedupeKey == paused.Current.DedupeKey {
+		t.Fatalf("server timer did not advance playback: %#v", state)
+	}
+}
+
+func testMP3Frames(count int) []byte {
+	data := make([]byte, 0, count*len(mp3.SilentBytes))
+	for range count {
+		data = append(data, mp3.SilentBytes...)
+	}
+	return data
+}
 
 func TestAdminPageRequiresAdminCredentials(t *testing.T) {
 	server := testServer(&Server{Auth: fakeAuth{user: UserInfo{Username: "alice"}}}).Handler()
@@ -192,7 +256,7 @@ func TestQueueReorderUsesStableQueueItemIDs(t *testing.T) {
 	room, _ := server.Rooms.Get("main")
 	room.Playback.Add("10", "alice")
 	room.Playback.Add("20", "alice")
-	state := room.Playback.Add("30", "alice")
+	state, _ := room.Playback.Add("30", "alice")
 	body := fmt.Sprintf(`{"action":"queue_reorder","queue_item_id":%d,"before_queue_item_id":%d}`, state.Queue[2].ID, state.Queue[0].ID)
 
 	req := httptest.NewRequest(http.MethodPost, "/rooms/main/api/command", strings.NewReader(body))
@@ -212,7 +276,7 @@ func TestRoomActionLogRecordsQueueRemoveReorderAndSkip(t *testing.T) {
 	room, _ := server.Rooms.Get("main")
 
 	room.Playback.Add(tracks["First"].DedupeKey, "alice")
-	state := room.Playback.Add(tracks["Second"].DedupeKey, "alice")
+	state, _ := room.Playback.Add(tracks["Second"].DedupeKey, "alice")
 	removeBody := fmt.Sprintf(`{"action":"queue_remove","queue_item_id":%d}`, state.Queue[1].ID)
 	view := postCommand(t, server, removeBody)
 	if len(view.Actions) != 1 {
@@ -226,7 +290,7 @@ func TestRoomActionLogRecordsQueueRemoveReorderAndSkip(t *testing.T) {
 	room, _ = server.Rooms.Get("main")
 	room.Playback.Add(tracks["First"].DedupeKey, "alice")
 	room.Playback.Add(tracks["Second"].DedupeKey, "alice")
-	state = room.Playback.Add(tracks["Third"].DedupeKey, "alice")
+	state, _ = room.Playback.Add(tracks["Third"].DedupeKey, "alice")
 	reorderBody := fmt.Sprintf(`{"action":"queue_reorder","queue_item_id":%d,"before_queue_item_id":%d}`, state.Queue[2].ID, state.Queue[0].ID)
 	view = postCommand(t, server, reorderBody)
 	if action := view.Actions[0]; action.Text != `Moved "Third" before "First" in the queue.` {

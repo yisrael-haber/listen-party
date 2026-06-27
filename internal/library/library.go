@@ -706,17 +706,22 @@ WHERE id = ? AND available = 1`, id)
 	return track, nil
 }
 
-func (l *Library) EnsureDuration(id int64) {
+func (l *Library) EnsureDuration(id int64) <-chan struct{} {
+	done := make(chan struct{})
 	if id <= 0 {
-		return
+		close(done)
+		return done
 	}
-	if _, loaded := l.durationLoading.LoadOrStore(id, struct{}{}); loaded {
-		return
+	actual, loaded := l.durationLoading.LoadOrStore(id, done)
+	if loaded {
+		return actual.(chan struct{})
 	}
 	go func() {
-		defer l.durationLoading.Delete(id)
 		_, _ = l.Get(context.Background(), id)
+		close(done)
+		l.durationLoading.Delete(id)
 	}()
+	return done
 }
 
 func (l *Library) ListByIDs(ctx context.Context, ids []int64) (map[int64]Track, error) {
@@ -736,20 +741,42 @@ func (l *Library) ListByIDs(ctx context.Context, ids []int64) (map[int64]Track, 
 
 func (l *Library) ListByDedupeKeys(ctx context.Context, keys []string) (map[string]Track, error) {
 	out := make(map[string]Track, len(keys))
+	unique := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
 	for _, key := range keys {
 		if key == "" {
 			continue
 		}
-		track, err := l.ResolveDedupeKey(ctx, key)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, key)
+	}
+	if len(unique) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(unique))
+	args := make([]any, len(unique))
+	for i, key := range unique {
+		placeholders[i] = "?"
+		args[i] = key
+	}
+	rows, err := l.db.QueryContext(ctx, `SELECT `+trackSelectColumns+` FROM tracks WHERE available = 1 AND dedupe_key IN (`+strings.Join(placeholders, ",")+`) ORDER BY dedupe_key ASC, path ASC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		track, err := scanTrack(rows)
 		if err != nil {
-			if errors.Is(err, ErrTrackNotFound) {
-				continue
-			}
 			return nil, err
 		}
-		out[key] = track
+		if _, exists := out[track.DedupeKey]; !exists {
+			out[track.DedupeKey] = track
+		}
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (l *Library) OpenMedia(ctx context.Context, id int64) (*Media, error) {

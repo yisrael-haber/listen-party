@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -9,7 +10,7 @@ import (
 
 func TestQueueWaitsForPlayAndSkipAdvances(t *testing.T) {
 	p := NewPlayback("default")
-	state := p.Add("10", "alice")
+	state, _ := p.Add("10", "alice")
 	if state.Current.DedupeKey != "" {
 		t.Fatalf("current = %q, want nothing playing", state.Current.DedupeKey)
 	}
@@ -29,7 +30,7 @@ func TestQueueWaitsForPlayAndSkipAdvances(t *testing.T) {
 	if state.Current.RequestedBy != "alice" {
 		t.Fatalf("current requested by = %q, want alice", state.Current.RequestedBy)
 	}
-	state = p.Add("20", "alice")
+	state, _ = p.Add("20", "alice")
 	if len(state.Queue) != 1 {
 		t.Fatalf("queue length = %d, want 1", len(state.Queue))
 	}
@@ -91,7 +92,7 @@ func TestQueueRemoveAndClear(t *testing.T) {
 	if _, err := p.Play(); err != nil {
 		t.Fatalf("play: %v", err)
 	}
-	state := p.Add("20", "alice")
+	state, _ := p.Add("20", "alice")
 	if len(state.Queue) != 1 {
 		t.Fatalf("queue length = %d, want 1", len(state.Queue))
 	}
@@ -109,6 +110,23 @@ func TestQueueRemoveAndClear(t *testing.T) {
 	}
 	if state.Current.DedupeKey != "10" {
 		t.Fatalf("current track = %q, want 10", state.Current.DedupeKey)
+	}
+}
+
+func TestQueueLimitRejectsWithoutChangingState(t *testing.T) {
+	p := NewPlayback("default")
+	for i := range maxQueueItems {
+		if _, err := p.Add(fmt.Sprintf("track-%d", i), "alice"); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	before := p.Snapshot()
+	after, err := p.Add("overflow", "alice")
+	if !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("overflow error = %v, want ErrQueueFull", err)
+	}
+	if len(after.Queue) != maxQueueItems || after.Revision != before.Revision {
+		t.Fatalf("rejected add changed state: before=%#v after=%#v", before, after)
 	}
 }
 
@@ -168,7 +186,7 @@ func TestQueueReorderByQueueItemID(t *testing.T) {
 	p := NewPlayback("default")
 	p.Add("10", "alice")
 	p.Add("20", "alice")
-	state := p.Add("30", "alice")
+	state, _ := p.Add("30", "alice")
 	firstID := state.Queue[0].ID
 	secondID := state.Queue[1].ID
 	thirdID := state.Queue[2].ID
@@ -260,6 +278,27 @@ func TestSubscribeUpdatesListenerCount(t *testing.T) {
 	state = p.Snapshot()
 	if len(state.Listeners) != 0 {
 		t.Fatalf("listener count after cancel = %d, want 0", len(state.Listeners))
+	}
+}
+
+func TestSubscriberReceivesLatestState(t *testing.T) {
+	p := NewPlayback("default")
+	ch, cancel := p.Subscribe(UserInfo{ID: "user1", Username: "alice"})
+	defer cancel()
+	<-ch
+	for _, key := range []string{"one", "two", "three"} {
+		if _, err := p.Add(key, "alice"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := <-ch
+	if len(state.Queue) != 3 || state.Queue[2].DedupeKey != "three" {
+		t.Fatalf("subscriber state = %#v, want latest queue", state)
+	}
+	select {
+	case stale := <-ch:
+		t.Fatalf("subscriber retained stale state: %#v", stale)
+	default:
 	}
 }
 

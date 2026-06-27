@@ -152,6 +152,12 @@ func (m *RoomManager) playbacks() []*Playback {
 	return playbacks
 }
 
+func (m *RoomManager) Close() {
+	for _, playback := range m.playbacks() {
+		playback.CloseSubscribers()
+	}
+}
+
 func UserHasRoomPermission(user UserInfo, room Room, permission RoomPermission) bool {
 	if UserIsRoomAdmin(user, room) {
 		return true

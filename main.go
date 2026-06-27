@@ -71,6 +71,7 @@ func main() {
 		Config:     cfg,
 		ConfigPath: resolvedConfigPath,
 	}
+	defer app.Rooms.Close()
 
 	serverCtx, stopServer := context.WithCancel(context.Background())
 	defer stopServer()

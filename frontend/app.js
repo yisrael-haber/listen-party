@@ -52,8 +52,7 @@ const currentUserEl = document.getElementById("currentUser");
 const roomSelect = document.getElementById("roomSelect");
 const logoutForm = document.getElementById("logoutForm");
 const defaultVolume = 0.25;
-const syncToleranceSeconds = 1;
-const syncGuardMS = 1000;
+const syncToleranceSeconds = 0.3;
 const searchDebounceMS = 300;
 const searchTextStorageKey = "listen-party.searchText";
 const searchFieldStorageKey = "listen-party.searchField";
@@ -63,6 +62,8 @@ const localVolumeStorageKey = "listen-party.localVolume";
 const localMutedStorageKey = "listen-party.localMuted";
 const minimumRoomSaveFeedbackMS = 450;
 const roomSaveResultVisibleMS = 1400;
+const recoveryStorageKey = "listen-party.playbackRecoveryAt";
+const recoveryCooldownMS = 30000;
 
 let lastState = null;
 let lastStateReceivedAt = 0;
@@ -134,35 +135,63 @@ function forceLogout() {
 
 function connectEvents() {
   closeEvents();
-  events = new EventSource(`/rooms/${encodeURIComponent(currentRoomID)}/events`);
+  const roomID = currentRoomID;
+  events = new EventSource(`/rooms/${encodeURIComponent(roomID)}/events`);
   events.addEventListener("state", (event) => {
-    renderState(JSON.parse(event.data));
+    if (roomID !== currentRoomID) return;
+    try {
+      renderState(JSON.parse(event.data));
+    } catch (err) {
+      recoverPlaybackClient("invalid playback state", err);
+    }
   });
   events.addEventListener("disconnect", () => {
+    if (roomID !== currentRoomID) return;
     forceLogout();
   });
 	events.addEventListener("error", async () => {
 		try {
 			const info = await api("/api/session");
-			if (info.disconnected?.[currentRoomID]) forceLogout();
+			if (roomID === currentRoomID && info.disconnected?.[roomID]) forceLogout();
 		} catch {
 			// A network outage is not an administrative disconnect.
 		}
 	});
 }
 
+function recoverPlaybackClient(reason, error = null) {
+  console.error(reason, error || "");
+  closeEvents();
+  audio.pause();
+  try {
+    const previous = Number(sessionStorage.getItem(recoveryStorageKey)) || 0;
+    if (Date.now() - previous > recoveryCooldownMS) {
+      sessionStorage.setItem(recoveryStorageKey, String(Date.now()));
+      location.reload();
+      return;
+    }
+  } catch {
+    // Without storage, do not risk a refresh loop.
+  }
+  libraryStatus.textContent = "Playback synchronization failed. Refresh this page.";
+}
+
 function hasMedia() {
   return audio.hasAttribute("src");
 }
 
-function loadMedia(trackID) {
-  const src = `/media/${trackID}`;
-  if (audio.getAttribute("src") === src) {
-    return;
-  }
-  audio.src = src;
-  audio.load();
-  loadArtwork(trackID);
+function mediaURL(track, suffix = "") {
+	return `/media/${track.id}${suffix}?v=${encodeURIComponent(track.dedupe_key || "")}`;
+}
+
+function loadMedia(track) {
+	const src = mediaURL(track);
+	if (audio.getAttribute("src") === src) {
+		return;
+	}
+	audio.src = src;
+	audio.load();
+	loadArtwork(track);
 }
 
 function syncCurrentAudio() {
@@ -183,6 +212,11 @@ function trackContext(track) {
 
 function trackSubtitle(track) {
   return [trackContext(track), track?.track_no ? `Track ${track.track_no}` : ""].filter(Boolean).join(" · ");
+}
+
+function trackSubtitleWithDuration(track) {
+  const duration = track?.duration_ms > 0 ? formatTime(track.duration_ms / 1000) : "";
+  return [trackSubtitle(track), duration].filter(Boolean).join(" · ");
 }
 
 function formatTime(seconds) {
@@ -277,9 +311,9 @@ function clearArtwork() {
   artworkEl.removeAttribute("src");
 }
 
-function loadArtwork(trackID) {
-  artworkEl.hidden = true;
-  artworkEl.src = `/media/${trackID}/artwork`;
+function loadArtwork(track) {
+	artworkEl.hidden = true;
+	artworkEl.src = mediaURL(track, "/artwork");
 }
 
 artworkEl.addEventListener("load", () => {
@@ -288,12 +322,33 @@ artworkEl.addEventListener("load", () => {
 
 artworkEl.addEventListener("error", clearArtwork);
 
+function samePlaybackTimeline(a, b) {
+  return Boolean(a && b
+    && a.current?.dedupe_key === b.current?.dedupe_key
+    && a.started_at === b.started_at
+    && a.paused === b.paused
+    && a.position_at_pause_ms === b.position_at_pause_ms);
+}
+
 function renderState(state) {
+  const revision = Number(state?.revision);
+  const serverTime = Date.parse(state?.server_time);
+  if (typeof state?.generation !== "string" || !state.generation || !Number.isSafeInteger(revision) || revision < 0 || !Number.isFinite(serverTime)) {
+    recoverPlaybackClient("malformed playback state");
+    return;
+  }
   if (state.room_id && currentRoomID && state.room_id !== currentRoomID) {
     return;
   }
-  if (lastState && Date.parse(state.server_time) < Date.parse(lastState.server_time)) {
-    return;
+  if (lastState) {
+    if (state.generation !== lastState.generation) {
+      recoverPlaybackClient("playback generation changed");
+      return;
+    }
+    const lastRevision = Number(lastState.revision);
+    const lastServerTime = Date.parse(lastState.server_time);
+    if (revision < lastRevision) return;
+    if (revision === lastRevision && serverTime < lastServerTime) return;
   }
   if (queueDragActive || queueReorderPending) {
     if (!pendingQueueState || Date.parse(state.server_time) >= Date.parse(pendingQueueState.server_time)) {
@@ -305,6 +360,7 @@ function renderState(state) {
     currentPermissions = new Set(state.permissions);
   }
 
+  const timelineChanged = !samePlaybackTimeline(lastState, state);
   lastState = state;
   lastStateReceivedAt = Date.now();
 
@@ -323,8 +379,8 @@ function renderState(state) {
   } else {
     trackEl.textContent = trackTitle(currentTrack);
     renderSubtitle(artistEl, trackContext(currentTrack), playbackRequester(current));
-    loadMedia(currentTrack.id);
-    syncAudio(state);
+	loadMedia(currentTrack);
+    syncAudio(state, timelineChanged);
   }
 
   queueEl.replaceChildren(...(queue.length ? queue.map(renderQueueItem) : [emptyHint("Queue is empty", "li")]));
@@ -489,7 +545,7 @@ function renderQueueItem(item) {
   const track = item.track;
   const meta = trackMeta(
     track ? trackTitle(track) : "Unavailable track",
-    track ? trackSubtitle(track) : "",
+    track ? trackSubtitleWithDuration(track) : "",
     playbackRequester(item)
   );
 
@@ -548,7 +604,7 @@ function handleQueueReorderKey(event, queueItemID) {
 function renderHistoryItem(item) {
 	const track = item.track;
 	const dedupeKey = item.dedupe_key;
-	return trackRow(track || {title: "Unavailable track", dedupe_key: dedupeKey}, standardTrackCommands(dedupeKey), playbackRequester(item), dedupeKey);
+	return trackRow(track || {title: "Unavailable track", dedupe_key: dedupeKey}, standardTrackCommands(dedupeKey), playbackRequester(item), dedupeKey, [], true);
 }
 
 function playbackRequester(item) {
@@ -688,11 +744,12 @@ function trackActionGroup(commandSpecs, dedupeKey, extraButtons = []) {
 	return actions;
 }
 
-function trackRow(track, commandSpecs, requestedBy = "", dedupeKey = track?.dedupe_key || "", extraButtons = []) {
+function trackRow(track, commandSpecs, requestedBy = "", dedupeKey = track?.dedupe_key || "", extraButtons = [], showDuration = false) {
 	const row = document.createElement("div");
 	row.className = "item";
 
-	const meta = trackMeta(trackTitle(track), trackSubtitle(track), requestedBy);
+	const subtitle = showDuration ? trackSubtitleWithDuration(track) : trackSubtitle(track);
+	const meta = trackMeta(trackTitle(track), subtitle, requestedBy);
 	const actionEl = trackActionGroup(commandSpecs, dedupeKey, extraButtons);
 
 	row.append(meta, actionEl);
@@ -903,7 +960,7 @@ function playAudio() {
   });
 }
 
-function syncAudio(state) {
+function syncAudio(state, correctTime = true) {
   if (!state.started_at) {
     setSeekUI(0);
     return;
@@ -916,23 +973,25 @@ function syncAudio(state) {
   }
   if (state.paused) {
     setSeekUI(target);
-    setSyncedTime(target);
+    if (correctTime) setSyncedTime(target);
     if (!audio.paused) {
       audio.pause();
     }
     return;
   }
 
-  setSyncedTime(target);
+  if (correctTime) setSyncedTime(target);
   if (audio.paused) playAudio();
   setSeekUI(audio.readyState >= HTMLMediaElement.HAVE_METADATA ? audio.currentTime : target);
 }
 
-setInterval(syncCurrentAudio, syncGuardMS);
-
 for (const eventName of ["loadedmetadata", "canplay"]) {
   audio.addEventListener(eventName, syncCurrentAudio);
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) syncCurrentAudio();
+});
 
 audio.addEventListener("timeupdate", () => {
   if (!seeking && hasMedia()) {
@@ -1169,16 +1228,15 @@ function emptyHint(text, tag = "p") {
 	return hint;
 }
 
-async function loadRooms() {
-  const info = await api("/api/session");
+async function loadRooms(info = null) {
+  info ||= await api("/api/session");
   currentUserEl.textContent = info.user?.username || "Signed in";
   const rooms = info.rooms || [];
   if (!currentRoomID) {
     currentRoomID = info.default_room_id || (rooms[0] && rooms[0].id) || "main";
   }
   if (rooms.length > 0 && !rooms.some((room) => room.id === currentRoomID)) {
-    location.href = `/rooms/${encodeURIComponent(rooms[0].id)}`;
-    return false;
+    currentRoomID = rooms[0].id;
   }
   roomSelect.replaceChildren(...rooms.map((room) => {
     const option = document.createElement("option");
@@ -1197,6 +1255,44 @@ async function loadRooms() {
 	roomSettingsButton.hidden = !canAdministerCurrentRoom;
 	if (!canAdministerCurrentRoom) closeRoomSettings();
   return true;
+}
+
+async function switchRoom(roomID, updateHistory = true) {
+  if (!roomID || roomID === currentRoomID) return;
+  roomSelect.disabled = true;
+  try {
+    const [info, state] = await Promise.all([
+      api("/api/session"),
+      api(`/rooms/${encodeURIComponent(roomID)}/api/state`),
+    ]);
+    if (!(info.rooms || []).some((room) => room.id === roomID)) {
+      throw new Error("room not found");
+    }
+
+    closeEvents();
+    audio.pause();
+    closeRoomSettings();
+    closeAutoDJSourceMenu();
+    currentRoomID = roomID;
+    lastState = null;
+    lastStateReceivedAt = 0;
+    queueDragActive = false;
+    queueReorderPending = false;
+    pendingQueueState = null;
+    if (updateHistory) history.pushState(null, "", `/rooms/${encodeURIComponent(roomID)}`);
+
+    if (!await loadRooms(info)) return;
+    restoreVolumePreferences();
+    renderState(state);
+    connectEvents();
+  } catch (err) {
+    console.error(err);
+    roomSelect.value = currentRoomID;
+    history.replaceState(null, "", `/rooms/${encodeURIComponent(currentRoomID)}`);
+  } finally {
+    roomSelect.disabled = roomSelect.options.length <= 1;
+    updateQueueSortable();
+  }
 }
 
 async function runSearch() {
@@ -1374,7 +1470,6 @@ seekInput.addEventListener("change", async () => {
   const positionMS = Math.max(0, Math.round(Number(seekInput.value) * 1000));
   seeking = false;
   await command({action: "seek", position_ms: positionMS});
-  syncCurrentAudio();
 });
 
 volumeInput.addEventListener("input", () => {
@@ -1389,7 +1484,6 @@ volumeInput.addEventListener("input", () => {
     storageSet(localMutedStorageKey, localMuted);
     applyAudioSettings(localVolume, localMuted);
   }
-  syncCurrentAudio();
 });
 
 volumeInput.addEventListener("change", async () => {
@@ -1426,7 +1520,6 @@ muteButton.addEventListener("click", async () => {
   storageSet(localVolumeStorageKey, localVolume);
   storageSet(localMutedStorageKey, localMuted);
   applyAudioSettings(localVolume, localMuted);
-  syncCurrentAudio();
 });
 
 presenceButton.addEventListener("click", () => {
@@ -1509,12 +1602,12 @@ clearHistoryButton.addEventListener("click", async () => {
 });
 
 roomSelect.addEventListener("change", () => {
-  if (!roomSelect.value || roomSelect.value === currentRoomID) {
-    return;
-  }
-  closeEvents();
-  roomSelect.disabled = true;
-  location.href = `/rooms/${encodeURIComponent(roomSelect.value)}`;
+  switchRoom(roomSelect.value).catch(console.error);
+});
+
+window.addEventListener("popstate", () => {
+  const roomID = decodeURIComponent(location.pathname.match(/^\/rooms\/([^/]+)/)?.[1] || "");
+  if (roomID) switchRoom(roomID, false).catch(console.error);
 });
 
 logoutForm.addEventListener("submit", () => {
@@ -1527,6 +1620,7 @@ async function start() {
   if (!await loadRooms()) {
     return;
   }
+	history.replaceState(null, "", `/rooms/${encodeURIComponent(currentRoomID)}`);
 	restoreVolumePreferences();
 	initQueueSortable();
 	connectEvents();

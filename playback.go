@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"slices"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 var (
 	ErrEmptyQueue        = errors.New("queue is empty")
+	ErrQueueFull         = errors.New("queue is full")
 	ErrQueueItemNotFound = errors.New("queue item not found")
 )
 
@@ -55,6 +58,8 @@ func defaultAutoDJSource() AutoDJSource {
 
 type PlaybackState struct {
 	RoomID            string         `json:"room_id"`
+	Generation        string         `json:"generation"`
+	Revision          uint64         `json:"revision"`
 	Current           PlaybackItem   `json:"-"`
 	StartedAt         time.Time      `json:"started_at"`
 	Paused            bool           `json:"paused"`
@@ -72,7 +77,11 @@ type PlaybackState struct {
 type Playback struct {
 	mu                 sync.Mutex
 	roomID             string
+	generation         string
 	nextID             int64
+	revision           uint64
+	endTimer           *time.Timer
+	endTimerStartedAt  time.Time
 	current            string
 	currentRequestedBy string
 	currentSource      string
@@ -103,10 +112,12 @@ type listenerPresence struct {
 
 const defaultListenerGrace = 10 * time.Second
 const maxRoomActions = 20
+const maxQueueItems = 200
 
 func NewPlayback(roomID string) *Playback {
 	return &Playback{
 		roomID:        roomID,
+		generation:    newPlaybackGeneration(),
 		autoDJ:        AutoDJState{Source: defaultAutoDJSource()},
 		roomAudio:     RoomAudio{Volume: 0.25},
 		notify:        make(map[chan PlaybackState]UserInfo),
@@ -115,30 +126,24 @@ func NewPlayback(roomID string) *Playback {
 	}
 }
 
-func (p *Playback) Add(dedupeKey string, requestedBy string) PlaybackState {
+func newPlaybackGeneration() string {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		panic("generate playback identity: " + err.Error())
+	}
+	return hex.EncodeToString(value[:])
+}
+
+func (p *Playback) Add(dedupeKey string, requestedBy string) (PlaybackState, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
+	if len(p.queue) >= maxQueueItems {
+		return p.stateLocked(), ErrQueueFull
+	}
 	p.nextID++
 	p.queue = append(p.queue, PlaybackItem{ID: p.nextID, DedupeKey: dedupeKey, At: time.Now(), RequestedBy: requestedBy, Source: "user"})
 	p.bumpLocked()
-	return p.stateLocked()
-}
-
-func (p *Playback) AddMany(dedupeKeys []string, requestedBy string) PlaybackState {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	now := time.Now()
-	for _, dedupeKey := range dedupeKeys {
-		if dedupeKey == "" {
-			continue
-		}
-		p.nextID++
-		p.queue = append(p.queue, PlaybackItem{ID: p.nextID, DedupeKey: dedupeKey, At: now, RequestedBy: requestedBy, Source: "user"})
-	}
-	p.bumpLocked()
-	return p.stateLocked()
+	return p.stateLocked(), nil
 }
 
 func (p *Playback) Play() (PlaybackState, error) {
@@ -252,6 +257,47 @@ func (p *Playback) Ended(dedupeKey string) PlaybackState {
 		p.startNextLocked()
 	}
 	return p.stateLocked()
+}
+
+func (p *Playback) endScheduled(dedupeKey string, startedAt time.Time) (PlaybackState, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.paused || p.current != dedupeKey || !p.started.Equal(startedAt) {
+		return p.stateLocked(), false
+	}
+	p.endTimer = nil
+	p.endTimerStartedAt = time.Time{}
+	p.startNextLocked()
+	return p.stateLocked(), true
+}
+
+func (p *Playback) endTimerMatches(dedupeKey string, startedAt time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.endTimer != nil && p.current == dedupeKey && p.started.Equal(startedAt) && p.endTimerStartedAt.Equal(startedAt)
+}
+
+func (p *Playback) scheduleEnd(after time.Duration, dedupeKey string, startedAt time.Time, callback func()) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.paused || p.current != dedupeKey || !p.started.Equal(startedAt) {
+		return
+	}
+	if p.endTimer != nil {
+		p.endTimer.Stop()
+	}
+	p.endTimerStartedAt = startedAt
+	p.endTimer = time.AfterFunc(after, callback)
+}
+
+func (p *Playback) cancelEndTimer() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.endTimer != nil {
+		p.endTimer.Stop()
+	}
+	p.endTimer = nil
+	p.endTimerStartedAt = time.Time{}
 }
 
 func (p *Playback) Remove(queueItemID int64) PlaybackState {
@@ -512,7 +558,7 @@ func (p *Playback) Subscribe(listener UserInfo) (<-chan PlaybackState, func()) {
 }
 
 func (p *Playback) SubscribeIfAllowed(listener UserInfo) (<-chan PlaybackState, func(), bool) {
-	ch := make(chan PlaybackState, 8)
+	ch := make(chan PlaybackState, 1)
 	p.mu.Lock()
 	if p.disconnected[listenerIdentity(listener)] {
 		close(ch)
@@ -580,6 +626,11 @@ func (p *Playback) DisconnectListener(username string) bool {
 func (p *Playback) CloseSubscribers() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.endTimer != nil {
+		p.endTimer.Stop()
+		p.endTimer = nil
+	}
+	p.endTimerStartedAt = time.Time{}
 
 	for ch := range p.notify {
 		delete(p.notify, ch)
@@ -648,11 +699,20 @@ func (p *Playback) recordCurrentLocked() {
 }
 
 func (p *Playback) bumpLocked() {
+	p.revision++
 	state := p.stateLocked()
 	for ch := range p.notify {
 		select {
 		case ch <- state:
 		default:
+			select {
+			case <-ch:
+			default:
+			}
+			select {
+			case ch <- state:
+			default:
+			}
 		}
 	}
 }
@@ -664,6 +724,8 @@ func (p *Playback) stateLocked() PlaybackState {
 	listeners := p.listenersLocked()
 	return PlaybackState{
 		RoomID:            p.roomID,
+		Generation:        p.generation,
+		Revision:          p.revision,
 		Current:           PlaybackItem{DedupeKey: p.current, At: p.started, RequestedBy: p.currentRequestedBy, Source: p.currentSource},
 		StartedAt:         p.started,
 		Paused:            p.paused,

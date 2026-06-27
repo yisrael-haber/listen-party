@@ -257,7 +257,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-ticker.C:
-			if !s.writeEvent(w, r, s.roomSnapshot(r.Context(), room)) {
+			if !s.writeEvent(w, r, room.Playback.Snapshot()) {
 				slog.Info("listener heartbeat write closed", "remote", r.RemoteAddr, "username", user.Username, "room", room.ID)
 				return
 			}
@@ -308,40 +308,12 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session disconnected; sign in again", http.StatusConflict)
 		return
 	}
-	state, err := s.viewStateForRequest(r, s.roomSnapshot(r.Context(), room))
+	state, err := s.viewStateForRequest(r, room.Playback.Snapshot())
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, state)
-}
-
-func (s *Server) roomSnapshot(ctx context.Context, room *Room) PlaybackState {
-	state := room.Playback.Snapshot()
-	if !s.playbackExpired(ctx, state) {
-		return state
-	}
-	slog.Info("auto advancing expired playback", "room", room.ID, "dedupe_key", state.Current.DedupeKey)
-	if err := s.prepareAutoDJ(ctx, room); err != nil {
-		slog.Warn("prepare auto-dj during automatic advance", "room", room.ID, "error", err)
-	}
-	state = room.Playback.Ended(state.Current.DedupeKey)
-	s.replenishAutoDJ(ctx, room)
-	return state
-}
-
-func (s *Server) playbackExpired(ctx context.Context, state PlaybackState) bool {
-	if s.Library == nil || state.Current.DedupeKey == "" || state.Paused || state.StartedAt.IsZero() {
-		return false
-	}
-	track, err := s.Library.ResolveDedupeKey(ctx, state.Current.DedupeKey)
-	if err != nil || track.DurationMS <= 0 {
-		if err == nil {
-			s.Library.EnsureDuration(track.ID)
-		}
-		return false
-	}
-	return time.Since(state.StartedAt).Milliseconds() > track.DurationMS+1500
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -832,11 +804,20 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "dedupe_key is required", http.StatusBadRequest)
 			return
 		}
-		if _, err := s.Library.ResolveDedupeKey(r.Context(), req.DedupeKey); err != nil {
+		track, err := s.Library.ResolveDedupeKey(r.Context(), req.DedupeKey)
+		if err != nil {
 			writeError(w, err)
 			return
 		}
-		s.writeCommandState(w, r, "queue_add", room, user.Username, room.Playback.Add(req.DedupeKey, user.Username))
+		if track.DurationMS <= 0 {
+			s.Library.EnsureDuration(track.ID)
+		}
+		state, err := room.Playback.Add(req.DedupeKey, user.Username)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		s.writeCommandState(w, r, "queue_add", room, user.Username, state)
 	case "queue_remove":
 		if req.QueueItemID <= 0 {
 			http.Error(w, "queue_item_id is required", http.StatusBadRequest)
@@ -899,6 +880,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, err)
 			return
+		}
+		if track.DurationMS <= 0 {
+			s.Library.EnsureDuration(track.ID)
 		}
 		before := room.Playback.Snapshot()
 		state := room.Playback.PlayNow(req.DedupeKey, user.Username)
@@ -1255,6 +1239,7 @@ func (s *Server) handleMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	defer media.Close()
 	w.Header().Set("Content-Type", "audio/mpeg")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeContent(w, r, media.Name(), media.ModTime(), media)
 }
 
@@ -1280,6 +1265,7 @@ func (s *Server) handleArtwork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeCommandState(w http.ResponseWriter, r *http.Request, event string, room *Room, username string, state PlaybackState) {
+	state = s.stabilizeAndSchedulePlayback(r.Context(), room, state)
 	view, err := s.viewStateForRequest(r, state)
 	if err != nil {
 		slog.Warn("build view state", "remote", r.RemoteAddr, "error", err)
