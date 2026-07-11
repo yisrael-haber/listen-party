@@ -6,7 +6,4 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - listen-party-data:/data
-
-volumes:
-  listen-party-data:
+      - .data:/data
