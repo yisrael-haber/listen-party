@@ -1,0 +1,4 @@
+services:
+  listen-party:
+    build:
+      context: .

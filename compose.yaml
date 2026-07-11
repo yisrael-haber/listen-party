@@ -1,8 +1,6 @@
 services:
   listen-party:
-    build:
-      context: .
-    image: listen-party:local
+    image: ${LISTEN_PARTY_IMAGE:-listen-party:local}
     container_name: listen-party
     restart: unless-stopped
     ports:

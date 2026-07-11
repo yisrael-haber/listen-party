@@ -54,15 +54,25 @@ Application users sign in at `http://localhost:8080/login`.
 
 ## Docker
 
-Build and run the local image with Docker Compose:
+Run the container with Docker Compose:
 
 ```sh
-docker compose up --build
+LISTEN_PARTY_IMAGE=ghcr.io/yourname/listen-party:latest docker compose -f compose.yaml up
 ```
 
-Open `http://localhost:8080`. The Compose file stores configuration,
-databases, authentication data, and the default music directory in the named
-volume `listen-party-data`.
+You can also put the image name in a local `.env` file:
+
+```dotenv
+LISTEN_PARTY_IMAGE=ghcr.io/yourname/listen-party:latest
+```
+
+Then run:
+
+```sh
+docker compose -f compose.yaml up
+```
+
+Open `http://localhost:8080`. The Compose files store configuration, databases, authentication data, and the default music directory in the named volume `listen-party-data`.
 
 The container starts the server with:
 
@@ -70,12 +80,9 @@ The container starts the server with:
 listen-party -config /data/listen-party/config.json
 ```
 
-To use host directories for persistent data or music, mount them into the
-container and set the music directories in `/admin` after startup. The container
-runs as the `listenparty` user, so mounted directories must be readable by that user, and the config directory must also be writable.
+To use host directories for persistent data or music, mount them into the container and set the music directories in `/admin` after startup. The container runs as the `listenparty` user, so mounted directories must be readable by that user, and the config directory must also be writable.
 
-After the first run, sign in to `http://localhost:8080/authAdmin` with the
-initial PocketBase superuser shown [above](#quick-start) and change the password.
+After the first run, sign in to `http://localhost:8080/authAdmin` with the initial PocketBase superuser shown [above](#quick-start) and change the password.
 
 ## Production Deployment
 
@@ -398,6 +405,12 @@ library database; handle them as sensitive backups.
 go test ./...
 go test -race ./...
 go build -o build/lp .
+```
+
+Build and run the local image with Docker Compose:
+
+```sh
+docker compose up --build
 ```
 
 Third-party browser assets and licenses are stored under `frontend/vendor/` and
