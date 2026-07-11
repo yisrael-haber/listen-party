@@ -72,17 +72,17 @@ func TestRoomAudioIsSharedPlaybackState(t *testing.T) {
 	}
 }
 
-func TestRoomActionsKeepLastTwenty(t *testing.T) {
+func TestRoomActionsKeepLastTwoHundred(t *testing.T) {
 	p := NewPlayback("default")
-	for i := range 25 {
+	for i := range 205 {
 		p.AddAction(RoomAction{Username: "alice", Text: string(rune('a' + i))})
 	}
 	actions := p.Snapshot().Actions
-	if len(actions) != 20 {
-		t.Fatalf("actions length = %d, want 20", len(actions))
+	if len(actions) != 200 {
+		t.Fatalf("actions length = %d, want 200", len(actions))
 	}
-	if actions[0].Text != "y" || actions[19].Text != "f" {
-		t.Fatalf("actions = %#v, want newest 20 first", actions)
+	if actions[0].Text != string(rune('a'+204)) || actions[199].Text != "f" {
+		t.Fatalf("actions = %#v, want newest 200 first", actions)
 	}
 }
 

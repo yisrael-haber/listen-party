@@ -71,4 +71,7 @@ func (s *Server) advanceScheduledPlayback(roomID, dedupeKey string, startedAt ti
 	}
 	s.replenishAutoDJ(context.Background(), room)
 	s.stabilizeAndSchedulePlayback(context.Background(), room, state)
+	if err := s.savePlayback(context.Background(), room); err != nil {
+		slog.Error("save scheduled playback state", "room", room.ID, "error", err)
+	}
 }

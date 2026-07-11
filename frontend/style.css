@@ -2,6 +2,226 @@
   box-sizing: border-box;
 }
 
+/* Listening-first layout. Remove .listening-first from .app-shell to restore
+   the previous queue-and-history-first layout. */
+.app-shell.listening-first .playback-area {
+  grid-template-rows: minmax(198px, 25vh) minmax(0, 1fr);
+  background:
+    radial-gradient(circle at 72% 0%, rgba(111, 191, 143, 0.09), transparent 32%),
+    var(--bg);
+}
+
+.app-shell.listening-first .room-select,
+.app-shell.listening-first #presenceButton,
+.app-shell.listening-first .queue-changes-button {
+  min-height: 36px;
+  border-color: transparent;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.09);
+}
+
+.app-shell.listening-first .room-select {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.app-shell.listening-first .global-bar .room-select {
+  color: var(--accent-strong);
+  font-weight: 750;
+  box-shadow: inset 0 -2px 0 rgba(111, 191, 143, 0.72);
+}
+
+.app-shell.listening-first #presenceButton,
+.app-shell.listening-first .queue-changes-button {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.app-shell.listening-first .room-select:hover,
+.app-shell.listening-first .room-select:focus-visible,
+.app-shell.listening-first #presenceButton:hover,
+.app-shell.listening-first #presenceButton:focus-visible,
+.app-shell.listening-first .queue-changes-button:hover,
+.app-shell.listening-first .queue-changes-button:focus-visible,
+.app-shell.listening-first .queue-changes-button[aria-expanded="true"] {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: inset 0 -1px 0 var(--accent);
+}
+
+.app-shell.listening-first .player-bar {
+  grid-row: 1;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  padding: 22px 38px 18px;
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.025), transparent 44%),
+    linear-gradient(180deg, #1b1d20, #151619);
+  box-shadow: none;
+}
+
+.app-shell.listening-first .now-playing {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+  gap: 16px;
+}
+
+.app-shell.listening-first .player-artwork-card {
+  width: 96px;
+  height: 96px;
+  border-radius: 16px;
+}
+
+.app-shell.listening-first .artwork-placeholder {
+  font-size: 2rem;
+}
+
+.app-shell.listening-first #track {
+  margin-bottom: 7px;
+  font-size: clamp(1.35rem, 1.8vw, 1.85rem);
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+}
+
+.app-shell.listening-first #artist {
+  color: rgba(241, 242, 244, 0.62);
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.app-shell.listening-first .transport-controls {
+  grid-column: 1;
+  grid-row: auto;
+  align-self: center;
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.app-shell.listening-first .transport-controls .icon-button {
+  width: 38px;
+  height: 38px;
+}
+
+.app-shell.listening-first #togglePlayback {
+  width: 46px;
+  height: 46px;
+  border-color: rgba(111, 191, 143, 0.55);
+  background: rgba(111, 191, 143, 0.13);
+  color: var(--accent-strong);
+}
+
+.app-shell.listening-first .seek-control {
+  grid-column: 2;
+  grid-row: auto;
+}
+
+.app-shell.listening-first .volume-control {
+  grid-column: 3;
+  grid-row: auto;
+  align-self: center;
+}
+
+.app-shell.listening-first .player-controls {
+  grid-column: 1;
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr) minmax(150px, 0.4fr);
+  align-items: center;
+  gap: 28px;
+  min-width: 0;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.app-shell.listening-first .playback-lists {
+  grid-row: 2;
+  grid-template-columns: minmax(360px, 1.28fr) minmax(240px, 0.72fr);
+  gap: 18px;
+  padding: 20px 24px 24px;
+}
+
+.app-shell.listening-first .history-panel {
+  opacity: 0.8;
+}
+
+.app-shell.listening-first .queue-panel {
+  box-shadow: inset 2px 0 0 rgba(111, 191, 143, 0.7);
+}
+
+.app-shell.listening-first .queue-panel h2 {
+  color: var(--accent-strong);
+}
+
+@media (max-width: 900px) {
+  .app-shell.listening-first .playback-area {
+    grid-template-rows: auto auto;
+  }
+
+  .app-shell.listening-first .player-bar {
+    grid-row: 1;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    gap: 12px;
+    padding: 22px 18px 18px;
+  }
+
+  .app-shell.listening-first .now-playing,
+  .app-shell.listening-first .player-controls {
+    grid-column: 1;
+  }
+
+  .app-shell.listening-first .now-playing {
+    grid-row: 1;
+  }
+
+  .app-shell.listening-first .player-artwork-card {
+    width: 76px;
+    height: 76px;
+    border-radius: 16px;
+  }
+
+  .app-shell.listening-first .player-controls {
+    grid-row: 2;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding-top: 14px;
+  }
+
+  .app-shell.listening-first .transport-controls,
+  .app-shell.listening-first .seek-control,
+  .app-shell.listening-first .volume-control {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .app-shell.listening-first .transport-controls {
+    justify-content: center;
+  }
+
+  .app-shell.listening-first .volume-control {
+    justify-self: center;
+  }
+
+  .app-shell.listening-first .playback-lists {
+    grid-row: 2;
+    grid-template-columns: 1fr;
+    padding: 14px 16px 22px;
+  }
+
+  .app-shell.listening-first .queue-panel {
+    grid-row: 1;
+  }
+
+  .app-shell.listening-first .history-panel {
+    grid-row: 2;
+  }
+}
+
 [hidden] {
   display: none !important;
 }
@@ -48,6 +268,7 @@ main {
 .app-shell {
   display: grid;
   grid-template-columns: minmax(360px, 30vw) minmax(0, 1fr);
+  grid-template-rows: 64px minmax(0, 1fr);
   gap: 0;
   width: 100%;
   height: 100vh;
@@ -55,16 +276,61 @@ main {
   padding: 0;
 }
 
+.global-bar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(20, 21, 24, 0.9);
+}
+
+.global-bar .user-strip {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  margin: 0;
+}
+
+.global-bar .room-select {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.global-bar .room-control-cluster {
+  grid-column: 2;
+  grid-row: 1;
+  justify-content: flex-start;
+}
+
+.global-bar .user-session {
+  grid-column: 4;
+  grid-row: 1;
+  justify-content: flex-end;
+  gap: 18px;
+}
+
 .library-rail {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-column: 1;
+  grid-row: 2;
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  padding: 30px 16px 16px;
+  padding: 16px;
   border-right: 1px solid var(--line);
   background:
     radial-gradient(circle at 18% 0%, rgba(111, 191, 143, 0.08), transparent 28%),
     linear-gradient(180deg, #17181b 0%, #131417 100%);
+}
+
+.playback-area {
+  grid-column: 2;
+  grid-row: 2;
 }
 
 .user-strip {
@@ -144,12 +410,6 @@ main {
   justify-content: flex-end;
   gap: 12px;
   min-width: 0;
-}
-
-.user-strip .queue-changes-menu {
-  grid-column: 2;
-  grid-row: 2;
-  align-self: center;
 }
 
 .user-strip .presence-menu {
@@ -346,6 +606,18 @@ h1, h2, p {
   background: var(--panel-2);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42);
   transform: translateX(-50%);
+}
+
+.queue-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.queue-panel .queue-changes-popover {
+  right: 0;
+  left: auto;
+  transform: none;
 }
 
 .queue-change-item {
@@ -2095,11 +2367,42 @@ input[type="range"]:disabled {
 
   .app-shell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
     height: auto;
     min-height: 100vh;
   }
 
+  .global-bar {
+    grid-column: 1;
+    grid-row: 1;
+    padding: 10px 16px;
+  }
+
+  .global-bar .user-strip {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px 12px;
+  }
+
+  .global-bar .room-select {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .global-bar .user-session {
+    grid-column: 2;
+    grid-row: 1;
+    gap: 10px;
+  }
+
+  .global-bar .room-control-cluster {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+
   .library-rail {
+    grid-column: 1;
+    grid-row: 2;
     min-height: 42vh;
     border-right: 0;
     border-bottom: 1px solid var(--line);
@@ -2110,6 +2413,8 @@ input[type="range"]:disabled {
   }
 
   .playback-area {
+    grid-column: 1;
+    grid-row: 3;
     grid-template-rows: auto auto;
   }
 

@@ -72,6 +72,10 @@ func main() {
 		ConfigPath: resolvedConfigPath,
 	}
 	defer app.Rooms.Close()
+	if err := app.restorePlayback(context.Background()); err != nil {
+		slog.Error("restore playback state", "error", err)
+		os.Exit(1)
+	}
 
 	serverCtx, stopServer := context.WithCancel(context.Background())
 	defer stopServer()

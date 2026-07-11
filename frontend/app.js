@@ -342,13 +342,21 @@ function renderState(state) {
   }
   if (lastState) {
     if (state.generation !== lastState.generation) {
-      recoverPlaybackClient("playback generation changed");
-      return;
+      // A backend restart has a new generation. Reopen the media stream and
+      // render the restored state directly instead of reloading the page.
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      clearArtwork();
+      lastState = null;
+      lastStateReceivedAt = 0;
+      pendingQueueState = null;
+    } else {
+      const lastRevision = Number(lastState.revision);
+      const lastServerTime = Date.parse(lastState.server_time);
+      if (revision < lastRevision) return;
+      if (revision === lastRevision && serverTime < lastServerTime) return;
     }
-    const lastRevision = Number(lastState.revision);
-    const lastServerTime = Date.parse(lastState.server_time);
-    if (revision < lastRevision) return;
-    if (revision === lastRevision && serverTime < lastServerTime) return;
   }
   if (queueDragActive || queueReorderPending) {
     if (!pendingQueueState || Date.parse(state.server_time) >= Date.parse(pendingQueueState.server_time)) {

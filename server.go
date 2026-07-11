@@ -589,6 +589,11 @@ func (s *Server) handleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.Library.UpdateScanConfig(cfg.MusicDirs, cfg.ScanWorkers)
+	for _, removedID := range removedRoomIDs(old.Rooms, cfg.Rooms) {
+		if err := s.Library.DeleteRoomPlaybackSnapshot(r.Context(), removedID); err != nil {
+			slog.Warn("delete removed room playback state", "room", removedID, "error", err)
+		}
+	}
 	s.Rooms.Update(cfg.Rooms)
 
 	s.configMu.Lock()
@@ -714,6 +719,20 @@ func cloneConfig(cfg Config) Config {
 		cfg.Rooms[i].Grants = cloneRoomGrants(cfg.Rooms[i].Grants)
 	}
 	return cfg
+}
+
+func removedRoomIDs(oldRooms, newRooms []Room) []string {
+	remaining := make(map[string]struct{}, len(newRooms))
+	for _, room := range newRooms {
+		remaining[room.ID] = struct{}{}
+	}
+	removed := make([]string, 0)
+	for _, room := range oldRooms {
+		if _, ok := remaining[room.ID]; !ok {
+			removed = append(removed, room.ID)
+		}
+	}
+	return removed
 }
 
 func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
@@ -1266,6 +1285,11 @@ func (s *Server) handleArtwork(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeCommandState(w http.ResponseWriter, r *http.Request, event string, room *Room, username string, state PlaybackState) {
 	state = s.stabilizeAndSchedulePlayback(r.Context(), room, state)
+	if err := s.savePlayback(r.Context(), room); err != nil {
+		slog.Error("save playback state", "remote", r.RemoteAddr, "room", room.ID, "error", err)
+		http.Error(w, "save playback state", http.StatusInternalServerError)
+		return
+	}
 	view, err := s.viewStateForRequest(r, state)
 	if err != nil {
 		slog.Warn("build view state", "remote", r.RemoteAddr, "error", err)

@@ -69,6 +69,15 @@ type PlaylistFolderImport struct {
 	Ambiguous  int `json:"ambiguous"`
 }
 
+// RoomPlaybackSnapshot is opaque application state associated with a room.
+// It intentionally lives beside the library data so a single SQLite database
+// remains the durable unit for a listen-party installation.
+type RoomPlaybackSnapshot struct {
+	RoomID   string
+	Revision uint64
+	State    []byte
+}
+
 type Media struct {
 	Track Track
 	file  *os.File
@@ -267,6 +276,9 @@ CREATE INDEX IF NOT EXISTS playlist_items_playlist_dedupe_idx ON playlist_items(
 	if err := l.ensureTrackKeyColumns(ctx); err != nil {
 		return err
 	}
+	if err := l.ensureRoomPlaybackStateTable(ctx); err != nil {
+		return err
+	}
 	if _, err := l.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS tracks_dedupe_idx ON tracks(dedupe_key, available)`); err != nil {
 		return err
 	}
@@ -274,6 +286,60 @@ CREATE INDEX IF NOT EXISTS playlist_items_playlist_dedupe_idx ON playlist_items(
 		_, err = l.db.ExecContext(ctx, `INSERT INTO tracks_fts(tracks_fts) VALUES('rebuild')`)
 	}
 	return err
+}
+
+func (l *Library) ensureRoomPlaybackStateTable(ctx context.Context) error {
+	rows, err := l.db.QueryContext(ctx, `PRAGMA table_info(room_playback_state)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	columns := map[string]string{}
+	roomIDPrimaryKey := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		columns[name] = columnType
+		if name == "room_id" && primaryKey == 1 {
+			roomIDPrimaryKey = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if roomIDPrimaryKey && strings.EqualFold(columns["room_id"], "TEXT") &&
+		strings.EqualFold(columns["revision"], "INTEGER") &&
+		strings.EqualFold(columns["state_json"], "BLOB") &&
+		strings.EqualFold(columns["updated_at"], "INTEGER") {
+		return nil
+	}
+
+	if len(columns) > 0 {
+		slog.Warn("reset incompatible playback recovery storage")
+	}
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS room_playback_state`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+CREATE TABLE room_playback_state (
+	room_id TEXT PRIMARY KEY,
+	revision INTEGER NOT NULL,
+	state_json BLOB NOT NULL,
+	updated_at INTEGER NOT NULL
+)`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (l *Library) ensureTrackKeyColumns(ctx context.Context) error {
@@ -675,6 +741,42 @@ func (l *Library) Count(ctx context.Context) (int64, error) {
 	var count int64
 	err := l.db.QueryRowContext(ctx, `SELECT count(*) FROM tracks WHERE available = 1`).Scan(&count)
 	return count, err
+}
+
+func (l *Library) LoadRoomPlaybackSnapshots(ctx context.Context) ([]RoomPlaybackSnapshot, error) {
+	rows, err := l.db.QueryContext(ctx, `SELECT room_id, revision, state_json FROM room_playback_state`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var snapshots []RoomPlaybackSnapshot
+	for rows.Next() {
+		var snapshot RoomPlaybackSnapshot
+		if err := rows.Scan(&snapshot.RoomID, &snapshot.Revision, &snapshot.State); err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	return snapshots, rows.Err()
+}
+
+func (l *Library) SaveRoomPlaybackSnapshot(ctx context.Context, snapshot RoomPlaybackSnapshot) error {
+	_, err := l.db.ExecContext(ctx, `
+INSERT INTO room_playback_state (room_id, revision, state_json, updated_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(room_id) DO UPDATE SET
+	revision = excluded.revision,
+	state_json = excluded.state_json,
+	updated_at = excluded.updated_at
+WHERE excluded.revision >= room_playback_state.revision`,
+		snapshot.RoomID, snapshot.Revision, snapshot.State, time.Now().UnixMilli())
+	return err
+}
+
+func (l *Library) DeleteRoomPlaybackSnapshot(ctx context.Context, roomID string) error {
+	_, err := l.db.ExecContext(ctx, `DELETE FROM room_playback_state WHERE room_id = ?`, roomID)
+	return err
 }
 
 func (l *Library) Get(ctx context.Context, id int64) (Track, error) {

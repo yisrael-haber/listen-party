@@ -7,8 +7,8 @@
   <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
-  <main class="app-shell">
-    <aside class="library-rail">
+  <main class="app-shell listening-first">
+    <header class="global-bar">
       <div class="user-strip">
         <div class="user-session">
           <span id="currentUser" class="username"></span>
@@ -18,10 +18,6 @@
         </div>
         <select id="roomSelect" class="room-select" aria-label="Room"></select>
         <div class="room-control-cluster">
-          <div class="queue-changes-menu">
-            <button id="queueChangesButton" class="secondary compact queue-changes-button" type="button" aria-expanded="false" aria-controls="queueChangesList">Queue changes</button>
-            <div id="queueChangesList" class="queue-changes-popover" hidden></div>
-          </div>
           <div class="presence-menu">
             <button id="presenceButton" class="secondary compact" type="button" aria-expanded="false" aria-controls="listenerList">
               <span id="presence" class="status"></span>
@@ -35,7 +31,9 @@
           </button>
         </div>
       </div>
+    </header>
 
+    <aside class="library-rail">
       <section id="roomSettingsView" class="room-settings-view" hidden>
         <div class="room-settings-header">
           <button id="closeRoomSettings" class="secondary compact icon-only" type="button" title="Back to library" aria-label="Back to library">
@@ -101,20 +99,26 @@
 
     <section class="playback-area">
       <div class="playback-lists">
+        <section class="queue-panel">
+          <div class="section-head">
+            <h2>Upcoming Queue</h2>
+            <div class="queue-panel-actions">
+              <div class="queue-changes-menu">
+                <button id="queueChangesButton" class="secondary compact queue-changes-button" type="button" aria-expanded="false" aria-controls="queueChangesList">Queue changes</button>
+                <div id="queueChangesList" class="queue-changes-popover" hidden></div>
+              </div>
+              <button id="clearQueue" class="secondary compact">Clear</button>
+            </div>
+          </div>
+          <ol id="queue"></ol>
+        </section>
+
         <section class="history-panel">
           <div class="section-head">
             <h2>Previously Played</h2>
             <button id="clearHistory" class="secondary compact">Clear</button>
           </div>
           <div id="history"></div>
-        </section>
-
-        <section class="queue-panel">
-          <div class="section-head">
-            <h2>Upcoming Queue</h2>
-            <button id="clearQueue" class="secondary compact">Clear</button>
-          </div>
-          <ol id="queue"></ol>
         </section>
       </div>
 

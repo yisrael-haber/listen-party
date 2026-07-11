@@ -74,6 +74,30 @@ type PlaybackState struct {
 	Disconnect        bool           `json:"-"`
 }
 
+// persistedPlayback is deliberately limited to user-visible playback intent.
+// Listener state, timers, and Auto-DJ shuffle progress are process-local and
+// are not persisted.
+type persistedPlayback struct {
+	Revision           uint64               `json:"-"`
+	Current            string               `json:"current"`
+	CurrentRequestedBy string               `json:"current_requested_by"`
+	CurrentSource      string               `json:"current_source"`
+	Started            time.Time            `json:"started"`
+	Paused             bool                 `json:"paused"`
+	PausePos           int64                `json:"pause_pos_ms"`
+	Queue              []persistedQueueItem `json:"queue"`
+	History            []persistedQueueItem `json:"history"`
+	AutoDJ             AutoDJState          `json:"auto_dj"`
+	RoomAudio          RoomAudio            `json:"room_audio"`
+	Actions            []RoomAction         `json:"actions"`
+}
+
+type persistedQueueItem struct {
+	DedupeKey   string `json:"dedupe_key"`
+	RequestedBy string `json:"requested_by"`
+	Source      string `json:"source"`
+}
+
 type Playback struct {
 	mu                 sync.Mutex
 	roomID             string
@@ -111,7 +135,7 @@ type listenerPresence struct {
 }
 
 const defaultListenerGrace = 10 * time.Second
-const maxRoomActions = 20
+const maxRoomActions = 200
 const maxQueueItems = 200
 
 func NewPlayback(roomID string) *Playback {
@@ -394,6 +418,58 @@ func (p *Playback) Snapshot() PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.stateLocked()
+}
+
+func (p *Playback) PersistentState() persistedPlayback {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.persistentStateLocked()
+}
+
+func (p *Playback) RestorePersistentState(state persistedPlayback, revision uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.revision = revision
+	p.nextID = 0
+	p.current = state.Current
+	p.currentRequestedBy = state.CurrentRequestedBy
+	p.currentSource = state.CurrentSource
+	p.started = state.Started
+	p.paused = state.Paused
+	p.pausePos = state.PausePos
+	p.queue = make([]PlaybackItem, 0, len(state.Queue))
+	for _, item := range state.Queue {
+		if item.DedupeKey == "" {
+			continue
+		}
+		p.nextID++
+		p.queue = append(p.queue, PlaybackItem{
+			ID:          p.nextID,
+			DedupeKey:   item.DedupeKey,
+			RequestedBy: item.RequestedBy,
+			Source:      item.Source,
+		})
+	}
+	p.history = make([]PlaybackItem, 0, len(state.History))
+	for _, item := range state.History {
+		if item.DedupeKey == "" {
+			continue
+		}
+		p.history = append(p.history, PlaybackItem{
+			DedupeKey:   item.DedupeKey,
+			RequestedBy: item.RequestedBy,
+			Source:      item.Source,
+		})
+	}
+	p.autoDJ = state.AutoDJ
+	if p.autoDJ.Source.Type == "" {
+		p.autoDJ.Source = defaultAutoDJSource()
+	}
+	p.autoDJNext = ""
+	p.autoDJEntries = nil
+	p.autoDJPreparing = false
+	p.roomAudio = state.RoomAudio
+	p.actions = append([]RoomAction(nil), state.Actions...)
 }
 
 func (p *Playback) AddAction(action RoomAction) PlaybackState {
@@ -738,6 +814,35 @@ func (p *Playback) stateLocked() PlaybackState {
 		Actions:           actions,
 		ServerTime:        time.Now(),
 	}
+}
+
+func (p *Playback) persistentStateLocked() persistedPlayback {
+	return persistedPlayback{
+		Revision:           p.revision,
+		Current:            p.current,
+		CurrentRequestedBy: p.currentRequestedBy,
+		CurrentSource:      p.currentSource,
+		Started:            p.started,
+		Paused:             p.paused,
+		PausePos:           p.pausePos,
+		Queue:              persistedQueue(p.queue),
+		History:            persistedQueue(p.history),
+		AutoDJ:             p.autoDJ,
+		RoomAudio:          p.roomAudio,
+		Actions:            append([]RoomAction(nil), p.actions...),
+	}
+}
+
+func persistedQueue(queue []PlaybackItem) []persistedQueueItem {
+	persisted := make([]persistedQueueItem, 0, len(queue))
+	for _, item := range queue {
+		persisted = append(persisted, persistedQueueItem{
+			DedupeKey:   item.DedupeKey,
+			RequestedBy: item.RequestedBy,
+			Source:      item.Source,
+		})
+	}
+	return persisted
 }
 
 func (p *Playback) listenersLocked() []string {
