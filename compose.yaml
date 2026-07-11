@@ -1,0 +1,14 @@
+services:
+  listen-party:
+    build:
+      context: .
+    image: listen-party:local
+    container_name: listen-party
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - listen-party-data:/data
+
+volumes:
+  listen-party-data:

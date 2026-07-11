@@ -52,6 +52,31 @@ Create application users in the `users` collection with:
 
 Application users sign in at `http://localhost:8080/login`.
 
+## Docker
+
+Build and run the local image with Docker Compose:
+
+```sh
+docker compose up --build
+```
+
+Open `http://localhost:8080`. The Compose file stores configuration,
+databases, authentication data, and the default music directory in the named
+volume `listen-party-data`.
+
+The container starts the server with:
+
+```sh
+listen-party -config /data/listen-party/config.json
+```
+
+To use host directories for persistent data or music, mount them into the
+container and set the music directories in `/admin` after startup. The container
+runs as the `listenparty` user, so mounted directories must be readable by that user, and the config directory must also be writable.
+
+After the first run, sign in to `http://localhost:8080/authAdmin` with the
+initial PocketBase superuser shown [above](#quick-start) and change the password.
+
 ## Production Deployment
 
 Run one listen-party process under a dedicated operating-system account. That
