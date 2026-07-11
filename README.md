@@ -105,12 +105,12 @@ it after failure, and deliver SIGINT or SIGTERM for graceful shutdown.
 
 ## Administration
 
-| URL          | Purpose                                            |
-| ------------ | -------------------------------------------------- |
-| `/`          | Music application                                  |
-| `/admin`     | listen-party configuration and library rescans     |
+| URL | Purpose |
+| --- | --- |
+| `/` | Music application |
+| `/admin` | listen-party configuration and library rescans |
 | `/authAdmin` | PocketBase users and authentication administration |
-| `/healthz`   | Unauthenticated health check                       |
+| `/healthz` | Unauthenticated health check |
 
 Only application admins can access `/admin`. PocketBase superusers administer
 `/authAdmin`; the two account types are separate.
@@ -127,11 +127,11 @@ The configuration directory is the unit to back up. It contains configuration,
 the library and playlist database, and PocketBase authentication data. Stop the
 server before copying it so the SQLite databases are consistent.
 
-| Path                               | Contents                                                |
-| ---------------------------------- | ------------------------------------------------------- |
-| `<config-dir>/config.json`         | Server, room, and authentication-provider configuration |
-| `<config-dir>/listen-party.sqlite` | Track index and playlists                               |
-| `<config-dir>/auth`                | Users, groups, and PocketBase authentication data       |
+| Path | Contents |
+| --- | --- |
+| `<config-dir>/config.json` | Server, room, and authentication-provider configuration |
+| `<config-dir>/listen-party.sqlite` | Track index and playlists |
+| `<config-dir>/auth` | Users, groups, and PocketBase authentication data |
 
 Treat backups as sensitive because they contain password hashes and
 authentication-provider secrets. To restore, stop the server, replace the
@@ -232,12 +232,12 @@ Room grants are positive and additive. A user receives the union of grants for
 their groups and the reserved `everyone` principal. There are no deny rules.
 Application admins implicitly receive every room permission.
 
-| Permission         | Allows                                                                 |
-| ------------------ | ---------------------------------------------------------------------- |
-| `queue_add`        | Add tracks to the queue                                                |
-| `queue_manage`     | Remove, reorder, or clear queued tracks; clear history; toggle Auto-DJ |
-| `playback_control` | Play, pause, seek, skip, previous, and play-now                        |
-| `volume_control`   | Change synchronized room volume and mute state                         |
+| Permission | Allows |
+| --- | --- |
+| `queue_add` | Add tracks to the queue |
+| `queue_manage` | Remove, reorder, or clear queued tracks; clear history; toggle Auto-DJ |
+| `playback_control` | Play, pause, seek, skip, previous, and play-now |
+| `volume_control` | Change synchronized room volume and mute state |
 
 Example restricted room:
 
@@ -248,7 +248,11 @@ Example restricted room:
   "admin_groups": ["office-admins"],
   "grants": {
     "staff": ["queue_add"],
-    "facilities": ["queue_add", "queue_manage", "playback_control"]
+    "facilities": [
+      "queue_add",
+      "queue_manage",
+      "playback_control"
+    ]
   }
 }
 ```
