@@ -1238,7 +1238,7 @@ function emptyHint(text, tag = "p") {
 
 async function loadRooms(info = null) {
   info ||= await api("/api/session");
-  currentUserEl.textContent = info.user?.username || "Signed in";
+  currentUserEl.textContent = info.user?.display_name || info.user?.username || "Signed in";
   const rooms = info.rooms || [];
   if (!currentRoomID) {
     currentRoomID = info.default_room_id || (rooms[0] && rooms[0].id) || "main";

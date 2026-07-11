@@ -677,7 +677,7 @@ func (p *Playback) DisconnectListener(username string) bool {
 	disconnected := false
 	disconnectedUsers := make(map[string]struct{})
 	for ch, listener := range p.notify {
-		if !strings.EqualFold(strings.TrimSpace(listener.Username), username) {
+		if !strings.EqualFold(listener.Display(), username) {
 			continue
 		}
 		disconnected = true
@@ -880,7 +880,7 @@ func (p *Playback) listenerJoinedLocked(listener UserInfo) {
 		presence = &listenerPresence{order: p.nextListenerOrder}
 		p.listeners[identity] = presence
 	}
-	presence.username = listener.Username
+	presence.username = listener.Display()
 	presence.connections++
 	presence.generation++
 }

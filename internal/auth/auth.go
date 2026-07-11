@@ -36,11 +36,19 @@ const (
 )
 
 type UserInfo struct {
-	ID         string   `json:"id"`
-	Username   string   `json:"username"`
-	Role       Role     `json:"role,omitempty"`
-	Groups     []string `json:"groups"`
-	SessionKey string   `json:"-"`
+	ID          string   `json:"id"`
+	Username    string   `json:"username"`
+	DisplayName string   `json:"display_name,omitempty"`
+	Role        Role     `json:"role,omitempty"`
+	Groups      []string `json:"groups"`
+	SessionKey  string   `json:"-"`
+}
+
+func (u UserInfo) Display() string {
+	if name := strings.TrimSpace(u.DisplayName); name != "" {
+		return name
+	}
+	return strings.TrimSpace(u.Username)
 }
 
 var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
@@ -257,11 +265,12 @@ func (s *Service) CurrentUser(r *http.Request) (UserInfo, bool) {
 		role = RoleAdmin
 	}
 	return UserInfo{
-		ID:         record.Id,
-		Username:   record.GetString("username"),
-		Role:       role,
-		Groups:     splitMetadataList(record.GetString("groups")),
-		SessionKey: requestSessionKey(r, token),
+		ID:          record.Id,
+		Username:    record.GetString("username"),
+		DisplayName: record.GetString("name"),
+		Role:        role,
+		Groups:      splitMetadataList(record.GetString("groups")),
+		SessionKey:  requestSessionKey(r, token),
 	}, true
 }
 

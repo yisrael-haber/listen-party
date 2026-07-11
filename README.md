@@ -315,7 +315,9 @@ Keycloak is optional. Configure a realm and confidential OIDC client, then set:
 ```
 
 The Keycloak user must have a username. On first login, listen-party creates or
-links the corresponding local application user.
+links the corresponding local application user. When the UserInfo response
+contains the standard `name` claim, listen-party uses it as that user's visible
+name; otherwise it shows the username.
 
 To use Keycloak groups for room grants, include a `groups` claim in the OIDC
 userinfo response. Group values are copied into the local user on login. If the

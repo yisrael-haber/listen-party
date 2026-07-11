@@ -763,10 +763,11 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "room permission denied", http.StatusForbidden)
 		return
 	}
+	displayName := user.Display()
 	switch req.Action {
 	case "auto_dj":
 		if !req.Enabled {
-			s.writeCommandState(w, r, "auto_dj_disable", room, user.Username, room.Playback.ConfigureAutoDJ(false, "", nil))
+			s.writeCommandState(w, r, "auto_dj_disable", room, displayName, room.Playback.ConfigureAutoDJ(false, "", nil))
 			return
 		}
 		config, _ := room.Playback.AutoDJConfiguration()
@@ -780,7 +781,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "shuffle source changed; retry", http.StatusConflict)
 			return
 		}
-		s.writeCommandState(w, r, "auto_dj_enable", room, user.Username, state)
+		s.writeCommandState(w, r, "auto_dj_enable", room, displayName, state)
 	case "auto_dj_source":
 		source, err := s.resolveAutoDJSource(r.Context(), req.Source)
 		if err != nil {
@@ -809,7 +810,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "shuffle source contains no available tracks", http.StatusConflict)
 				return
 			}
-			s.writeCommandState(w, r, "auto_dj_source", room, user.Username, room.Playback.ConfigureAutoDJSource(source, "", nil))
+			s.writeCommandState(w, r, "auto_dj_source", room, displayName, room.Playback.ConfigureAutoDJSource(source, "", nil))
 			return
 		}
 		candidate, entries, err := s.newAutoDJCycle(r.Context(), source)
@@ -817,7 +818,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err)
 			return
 		}
-		s.writeCommandState(w, r, "auto_dj_source", room, user.Username, room.Playback.ConfigureAutoDJSource(source, candidate, entries))
+		s.writeCommandState(w, r, "auto_dj_source", room, displayName, room.Playback.ConfigureAutoDJSource(source, candidate, entries))
 	case "queue_add":
 		if req.DedupeKey == "" {
 			http.Error(w, "dedupe_key is required", http.StatusBadRequest)
@@ -831,12 +832,12 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		if track.DurationMS <= 0 {
 			s.Library.EnsureDuration(track.ID)
 		}
-		state, err := room.Playback.Add(req.DedupeKey, user.Username)
+		state, err := room.Playback.Add(req.DedupeKey, displayName)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
-		s.writeCommandState(w, r, "queue_add", room, user.Username, state)
+		s.writeCommandState(w, r, "queue_add", room, displayName, state)
 	case "queue_remove":
 		if req.QueueItemID <= 0 {
 			http.Error(w, "queue_item_id is required", http.StatusBadRequest)
@@ -846,9 +847,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		removed, ok := queueItemByID(before.Queue, req.QueueItemID)
 		state := room.Playback.Remove(req.QueueItemID)
 		if ok && len(state.Queue) != len(before.Queue) {
-			state = s.recordRoomAction(r, room, user.Username, fmt.Sprintf("Removed %q from the queue.", s.trackActionName(r.Context(), removed.DedupeKey)))
+			state = s.recordRoomAction(r, room, displayName, fmt.Sprintf("Removed %q from the queue.", s.trackActionName(r.Context(), removed.DedupeKey)))
 		}
-		s.writeCommandState(w, r, "queue_remove", room, user.Username, state)
+		s.writeCommandState(w, r, "queue_remove", room, displayName, state)
 	case "queue_reorder":
 		if req.QueueItemID <= 0 {
 			http.Error(w, "queue_item_id is required", http.StatusBadRequest)
@@ -869,19 +870,19 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		if movedOK && queueOrderChanged(before.Queue, state.Queue) {
 			movedName := s.trackActionName(r.Context(), moved.DedupeKey)
 			if req.BeforeQueueItemID == 0 {
-				state = s.recordRoomAction(r, room, user.Username, fmt.Sprintf("Moved %q to the end of the queue.", movedName))
+				state = s.recordRoomAction(r, room, displayName, fmt.Sprintf("Moved %q to the end of the queue.", movedName))
 			} else if targetOK {
-				state = s.recordRoomAction(r, room, user.Username, fmt.Sprintf("Moved %q before %q in the queue.", movedName, s.trackActionName(r.Context(), target.DedupeKey)))
+				state = s.recordRoomAction(r, room, displayName, fmt.Sprintf("Moved %q before %q in the queue.", movedName, s.trackActionName(r.Context(), target.DedupeKey)))
 			}
 		}
-		s.writeCommandState(w, r, "queue_reorder", room, user.Username, state)
+		s.writeCommandState(w, r, "queue_reorder", room, displayName, state)
 	case "queue_clear":
 		before := room.Playback.Snapshot()
 		state := room.Playback.Clear()
 		if len(before.Queue) > 0 {
-			state = s.recordRoomAction(r, room, user.Username, "Cleared the queue.")
+			state = s.recordRoomAction(r, room, displayName, "Cleared the queue.")
 		}
-		s.writeCommandState(w, r, "queue_clear", room, user.Username, state)
+		s.writeCommandState(w, r, "queue_clear", room, displayName, state)
 	case "play":
 		state, err := room.Playback.Play()
 		if err != nil {
@@ -889,7 +890,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
-		s.writeCommandState(w, r, "play", room, user.Username, state)
+		s.writeCommandState(w, r, "play", room, displayName, state)
 	case "play_now":
 		if req.DedupeKey == "" {
 			http.Error(w, "dedupe_key is required", http.StatusBadRequest)
@@ -904,23 +905,23 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			s.Library.EnsureDuration(track.ID)
 		}
 		before := room.Playback.Snapshot()
-		state := room.Playback.PlayNow(req.DedupeKey, user.Username)
+		state := room.Playback.PlayNow(req.DedupeKey, displayName)
 		if before.Current.DedupeKey != "" {
-			state = s.recordRoomAction(r, room, user.Username, fmt.Sprintf("Played %q now, replacing %q.", trackActionTitle(track), s.trackActionName(r.Context(), before.Current.DedupeKey)))
+			state = s.recordRoomAction(r, room, displayName, fmt.Sprintf("Played %q now, replacing %q.", trackActionTitle(track), s.trackActionName(r.Context(), before.Current.DedupeKey)))
 		}
-		s.writeCommandState(w, r, "play_now", room, user.Username, state)
+		s.writeCommandState(w, r, "play_now", room, displayName, state)
 	case "pause":
-		s.writeCommandState(w, r, "pause", room, user.Username, room.Playback.Pause())
+		s.writeCommandState(w, r, "pause", room, displayName, room.Playback.Pause())
 	case "room_audio":
 		if req.Volume < 0 || req.Volume > maxRoomVolume {
 			http.Error(w, "volume must be between 0 and 0.5", http.StatusBadRequest)
 			return
 		}
-		s.writeCommandState(w, r, "room_audio", room, user.Username, room.Playback.SetRoomAudio(req.Volume, req.Muted))
+		s.writeCommandState(w, r, "room_audio", room, displayName, room.Playback.SetRoomAudio(req.Volume, req.Muted))
 	case "previous":
-		s.writeCommandState(w, r, "previous", room, user.Username, room.Playback.Previous())
+		s.writeCommandState(w, r, "previous", room, displayName, room.Playback.Previous())
 	case "seek":
-		s.writeCommandState(w, r, "seek", room, user.Username, room.Playback.SeekTo(req.PositionMS))
+		s.writeCommandState(w, r, "seek", room, displayName, room.Playback.SeekTo(req.PositionMS))
 	case "skip":
 		before := room.Playback.Snapshot()
 		if err := s.prepareAutoDJ(r.Context(), room); err != nil {
@@ -930,11 +931,11 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		state := room.Playback.Skip()
 		s.replenishAutoDJ(r.Context(), room)
 		if before.Current.DedupeKey != "" {
-			state = s.recordRoomAction(r, room, user.Username, s.skipActionText(r.Context(), before.Current.DedupeKey, state.Current.DedupeKey))
+			state = s.recordRoomAction(r, room, displayName, s.skipActionText(r.Context(), before.Current.DedupeKey, state.Current.DedupeKey))
 		}
-		s.writeCommandState(w, r, "skip", room, user.Username, state)
+		s.writeCommandState(w, r, "skip", room, displayName, state)
 	case "history_clear":
-		s.writeCommandState(w, r, "history_clear", room, user.Username, room.Playback.ClearHistory())
+		s.writeCommandState(w, r, "history_clear", room, displayName, room.Playback.ClearHistory())
 	}
 }
 
