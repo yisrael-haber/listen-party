@@ -47,7 +47,7 @@ Create application users in the `users` collection with:
 
 - A username and password.
 - `enabled` set to `true`.
-- Optional groups for room permissions.
+- Optional `groups` for application-managed room permissions.
 - Optional `app_role` set to `admin` for application administration.
 
 Application users sign in at `http://localhost:8080/login`.
@@ -320,8 +320,10 @@ contains the standard `name` claim, listen-party uses it as that user's visible
 name; otherwise it shows the username.
 
 To use Keycloak groups for room grants, include a `groups` claim in the OIDC
-userinfo response. Group values are copied into the local user on login. If the
-claim is absent, existing local groups are retained.
+userinfo response. Group values replace `sso_groups` on each Keycloak login. A
+user's effective room groups are the union of `sso_groups` and the
+application-managed `groups` field. If the claim is absent,
+`sso_groups` is retained.
 
 Restart the server after changing authentication settings.
 

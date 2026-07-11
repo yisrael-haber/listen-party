@@ -31,7 +31,7 @@ const (
 	defaultAdminPassword = "admin"
 	sessionCookieName    = "listen_party_auth"
 	sessionKeyCookieName = "listen_party_session"
-	sessionDuration      = 7 * 24 * time.Hour
+	sessionDuration      = 24 * time.Hour
 	usersCollection      = "users"
 )
 
@@ -269,7 +269,7 @@ func (s *Service) CurrentUser(r *http.Request) (UserInfo, bool) {
 		Username:    record.GetString("username"),
 		DisplayName: record.GetString("name"),
 		Role:        role,
-		Groups:      splitMetadataList(record.GetString("groups")),
+		Groups:      effectiveGroups(record.GetString("groups"), record.GetString("sso_groups")),
 		SessionKey:  requestSessionKey(r, token),
 	}, true
 }
@@ -380,13 +380,13 @@ func bindOAuthDefaults(app core.App) {
 				}
 			}
 			if hasGroups {
-				e.CreateData["groups"] = groupValue
+				e.CreateData["sso_groups"] = groupValue
 			}
 			if err := e.Next(); err != nil {
 				return err
 			}
-			if hasGroups && e.Record != nil && e.Record.GetString("groups") != groupValue {
-				e.Record.Set("groups", groupValue)
+			if hasGroups && e.Record != nil && e.Record.GetString("sso_groups") != groupValue {
+				e.Record.Set("sso_groups", groupValue)
 				return e.App.Save(e.Record)
 			}
 			return nil
@@ -470,7 +470,19 @@ func ensureUserMetadata(app core.App) error {
 	if collection.Fields.GetByName("groups") == nil {
 		collection.Fields.Add(&core.TextField{
 			Name: "groups",
-			Help: "Comma-separated groups used for listen-party room permissions.",
+			Help: "Comma-separated application-managed groups used for listen-party room permissions.",
+			Max:  1000,
+		})
+		changed = true
+	}
+	if collection.Fields.GetByName("local_groups") != nil {
+		collection.Fields.RemoveByName("local_groups")
+		changed = true
+	}
+	if collection.Fields.GetByName("sso_groups") == nil {
+		collection.Fields.Add(&core.TextField{
+			Name: "sso_groups",
+			Help: "Comma-separated groups synchronized from the SSO provider on login.",
 			Max:  1000,
 		})
 		changed = true
@@ -520,7 +532,7 @@ func syncMissingUserColumns(app core.App, collection *core.Collection) error {
 	if err != nil {
 		return err
 	}
-	for _, fieldName := range []string{"username", "enabled", "app_role", "groups"} {
+	for _, fieldName := range []string{"username", "enabled", "app_role", "groups", "sso_groups"} {
 		if slices.Contains(columns, fieldName) {
 			continue
 		}
@@ -547,6 +559,16 @@ func splitMetadataList(value string) []string {
 		}
 	}
 	return out
+}
+
+func effectiveGroups(groupsValue, sso string) []string {
+	groups := splitMetadataList(groupsValue)
+	for _, group := range splitMetadataList(sso) {
+		if !slices.Contains(groups, group) {
+			groups = append(groups, group)
+		}
+	}
+	return groups
 }
 
 func oauthGroups(user *pbauth.AuthUser) ([]string, bool) {

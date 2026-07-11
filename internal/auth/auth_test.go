@@ -55,6 +55,15 @@ func TestOpenBootstrapsAdminAndAuthAdminRedirect(t *testing.T) {
 	if users.Fields.GetByName("app_role") == nil {
 		t.Fatal("users collection missing app_role field")
 	}
+	if users.Fields.GetByName("groups") == nil {
+		t.Fatal("users collection missing groups field")
+	}
+	if users.Fields.GetByName("sso_groups") == nil {
+		t.Fatal("users collection missing sso_groups field")
+	}
+	if users.Fields.GetByName("local_groups") != nil {
+		t.Fatal("users collection still has local_groups field")
+	}
 	if got := users.PasswordAuth.IdentityFields; len(got) != 1 || got[0] != "username" {
 		t.Fatalf("users identity fields = %v, want [username]", got)
 	}
@@ -425,6 +434,47 @@ func TestOAuthGroupsLeavesMissingClaimAlone(t *testing.T) {
 	}
 }
 
+func TestEffectiveGroupsUnionsLocalAndSSOGroups(t *testing.T) {
+	got := effectiveGroups("staff, room-admins", "staff, /engineering")
+	if want := "staff,room-admins,/engineering"; strings.Join(got, ",") != want {
+		t.Fatalf("effectiveGroups() = %v, want %s", got, want)
+	}
+}
+
+func TestCurrentUserUsesLocalAndSSOGroups(t *testing.T) {
+	svc, err := Open(Config{
+		DataDir:             filepath.Join(t.TempDir(), "auth"),
+		BootstrapAdminEmail: "admin@listen-party.local",
+	})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer svc.Close()
+
+	record, err := createAppUser(svc, "alice", "changed-password", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Set("groups", "staff, room-admins")
+	record.Set("sso_groups", "staff, engineering")
+	if err := svc.app.Save(record); err != nil {
+		t.Fatal(err)
+	}
+	token, err := record.NewAuthToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	user, ok := svc.CurrentUser(req)
+	if !ok {
+		t.Fatal("CurrentUser() rejected valid user")
+	}
+	if want := "staff,room-admins,engineering"; strings.Join(user.Groups, ",") != want {
+		t.Fatalf("groups = %v, want %s", user.Groups, want)
+	}
+}
+
 func TestEnsureUserMetadataRepairsMissingColumns(t *testing.T) {
 	svc, err := Open(Config{
 		DataDir:             filepath.Join(t.TempDir(), "auth"),
@@ -435,8 +485,8 @@ func TestEnsureUserMetadataRepairsMissingColumns(t *testing.T) {
 	}
 	defer svc.Close()
 
-	if _, err := svc.app.DB().DropColumn(usersCollection, "app_role").Execute(); err != nil {
-		t.Fatalf("drop app_role column: %v", err)
+	if _, err := svc.app.DB().DropColumn(usersCollection, "groups").Execute(); err != nil {
+		t.Fatalf("drop groups column: %v", err)
 	}
 	if err := ensureUserMetadata(svc.app); err != nil {
 		t.Fatalf("ensureUserMetadata() error = %v", err)
@@ -445,8 +495,8 @@ func TestEnsureUserMetadataRepairsMissingColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(columns, "app_role") {
-		t.Fatal("app_role column was not repaired")
+	if !contains(columns, "groups") {
+		t.Fatal("groups column was not repaired")
 	}
 }
 
