@@ -44,6 +44,7 @@ func (s *Server) Handler() http.Handler {
 	requireUser := s.Auth.Require()
 	webFiles := http.FileServer(http.FS(webRoot()))
 	mux.Handle("GET /{$}", requireUser(http.HandlerFunc(s.handleApp)))
+	mux.Handle("GET /favicon.ico", http.HandlerFunc(s.handleFavicon))
 	mux.Handle("GET /rooms/{room}", requireUser(http.HandlerFunc(s.handleApp)))
 	mux.Handle("GET /assets/", requireUser(http.StripPrefix("/assets/", webFiles)))
 	mux.Handle("GET /rooms/{room}/events", requireUser(http.HandlerFunc(s.handleEvents)))
@@ -213,6 +214,10 @@ func (s *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAdminJS(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, adminRoot(), "admin.js")
+}
+
+func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, webRoot(), "favicon.ico")
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
