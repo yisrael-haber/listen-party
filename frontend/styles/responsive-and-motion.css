@@ -1,0 +1,535 @@
+@media (prefers-reduced-motion: reduce) {
+  .queue-reorder-error {
+    animation: none;
+  }
+}
+
+.row-actions {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+
+.item .row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 2px;
+  width: auto;
+}
+
+.item .row-actions > button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 0.92rem;
+  line-height: 1;
+  opacity: 0.58;
+  transition: opacity 120ms ease, border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.item .row-actions > button:hover,
+.item .row-actions > button:focus-visible {
+  border-color: rgba(255, 255, 255, 0.085);
+  background: rgba(255, 255, 255, 0.055);
+  opacity: 1;
+}
+
+.item:hover .row-actions > button,
+.item:focus-within .row-actions > button {
+  opacity: 0.9;
+}
+
+.item .row-actions .playlist-add-menu {
+  align-self: center;
+  width: 32px;
+  min-width: 32px;
+}
+
+.item .row-actions.has-standalone-action {
+  display: flex;
+}
+
+.item .row-actions > .trash-button {
+  align-self: center;
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+}
+
+.item .row-actions .playlist-more-button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+  letter-spacing: 0;
+  opacity: 0.58;
+  transition: opacity 120ms ease, border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.item .row-actions .playlist-more-button:hover,
+.item .row-actions .playlist-more-button:focus-visible {
+  border-color: rgba(255, 255, 255, 0.085);
+  background: rgba(255, 255, 255, 0.055);
+  opacity: 1;
+}
+
+.item:hover .row-actions .playlist-more-button,
+.item:focus-within .row-actions .playlist-more-button {
+  opacity: 0.9;
+}
+
+.item .row-actions .command-icon {
+  display: inline-block;
+}
+
+.item .row-actions .command-label {
+  display: none;
+}
+
+.playlist-add-label {
+  display: none;
+}
+
+.item .row-actions.playlist-only {
+  display: flex;
+}
+
+.item .row-actions.playlist-only.has-standalone-action {
+  display: flex;
+}
+
+.item .row-actions.playlist-only.has-standalone-action > .trash-button {
+  width: 32px;
+}
+
+.item .row-actions.standalone-only {
+  display: flex;
+}
+
+.item .row-actions.standalone-only > .trash-button {
+  width: 32px;
+}
+
+.item .row-actions.single-room-action {
+  display: flex;
+}
+
+.item .row-actions.single-room-action .playlist-add-menu {
+  width: 32px;
+}
+
+.item .row-actions.no-actions {
+  display: none;
+}
+
+.item .row-actions.playlist-only .playlist-add-menu {
+  width: 32px;
+}
+
+.item .row-actions.playlist-only .playlist-more-button {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+}
+
+.item .row-actions.playlist-only .playlist-add-label {
+  display: none;
+}
+
+.playlist-add-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.player-bar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(420px, 1.7fr) minmax(190px, 0.75fr);
+  grid-template-rows: 42px 34px;
+  align-content: center;
+  justify-content: stretch;
+  column-gap: 24px;
+  row-gap: 8px;
+  align-items: center;
+  min-width: 0;
+  min-height: 116px;
+  padding: 16px 26px 14px;
+  border-top: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 52%),
+    #151619;
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.28);
+}
+
+.now-playing {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 16px;
+}
+
+.track-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+}
+
+#track {
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1rem;
+  line-height: 1.2;
+  font-weight: 750;
+}
+
+#artist {
+  min-height: 1em;
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.1;
+}
+
+#artist:empty {
+  display: none;
+}
+
+audio {
+  display: none;
+}
+
+.player-controls {
+  display: contents;
+}
+
+.transport-controls {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.player-artwork-card {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 15px;
+  background:
+    radial-gradient(circle at 30% 24%, rgba(131, 211, 163, 0.2), transparent 34%),
+    linear-gradient(135deg, #25272c, #151619);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 8px 22px rgb(0 0 0 / 0.2);
+}
+
+.player-artwork {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.artwork-placeholder {
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 1.45rem;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.player-artwork:not([hidden]) + .artwork-placeholder {
+  opacity: 0;
+}
+
+.seek-control, .volume-control {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.seek-control {
+  grid-column: 2;
+  grid-row: 2;
+  grid-template-columns: 42px minmax(0, 1fr) 42px;
+  width: 100%;
+  justify-self: stretch;
+}
+
+.volume-control {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  grid-template-columns: 42px minmax(100px, 1fr);
+  grid-template-rows: 24px 32px;
+  column-gap: 10px;
+  row-gap: 0;
+  justify-self: end;
+  width: min(100%, 214px);
+  max-width: 214px;
+}
+
+.volume-control #mute {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  align-self: center;
+}
+
+.volume-control #volume {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.volume-mode {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  justify-self: center;
+  min-height: 22px;
+  padding: 2px 9px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 0.72rem;
+  line-height: 1.1;
+}
+
+.volume-mode[aria-pressed="true"] {
+  color: var(--accent-strong);
+}
+
+input[type="range"] {
+  min-height: 32px;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+input[type="range"]:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.auto-dj-control {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.auto-dj-control .auto-dj-button {
+  border-radius: 999px 0 0 999px;
+}
+
+.auto-dj-source {
+  max-width: 138px;
+  min-height: 40px;
+  padding: 0 24px 0 10px;
+  overflow: hidden;
+  border-radius: 0 999px 999px 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+}
+
+.auto-dj-source::after {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  border: 4px solid transparent;
+  border-top-color: currentColor;
+  content: "";
+  transform: translateY(-1px);
+}
+
+.auto-dj-source-menu {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: max-content;
+  min-width: 190px;
+  max-width: min(320px, calc(100vw - 24px));
+  max-height: min(360px, 60vh);
+  padding: 6px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.4);
+}
+
+.auto-dj-source-option {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  overflow: hidden;
+  border-color: transparent;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auto-dj-source-option:hover,
+.auto-dj-source-option:focus-visible,
+.auto-dj-source-option[aria-checked="true"] {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.auto-dj-source-option[aria-checked="true"] {
+  color: var(--accent-strong);
+}
+
+.auto-dj-source-status,
+.auto-dj-source-error {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.auto-dj-source-error {
+  color: #f0a0a0;
+}
+
+.auto-dj-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.auto-dj-button[data-enabled="true"] {
+  border-color: var(--accent);
+  background: transparent;
+  color: var(--accent-strong);
+}
+
+.playback-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+.play-icon {
+  background: currentColor;
+  clip-path: polygon(20% 8%, 20% 92%, 88% 50%);
+}
+
+.pause-icon {
+  position: relative;
+}
+
+.pause-icon::before, .pause-icon::after {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 5px;
+  border-radius: 1px;
+  background: currentColor;
+  content: "";
+}
+
+.pause-icon::before {
+  left: 3px;
+}
+
+.pause-icon::after {
+  right: 3px;
+}
+
+.volume-icon {
+  display: block;
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.volume-muted-icon, #mute.muted .volume-on-icon {
+  display: none;
+}
+
+#mute.muted .volume-muted-icon {
+  display: block;
+}
+
+.skip-icon, .previous-icon {
+  position: relative;
+  display: block;
+  width: 18px;
+  height: 16px;
+}
+
+.skip-icon::before, .previous-icon::before {
+  position: absolute;
+  inset: 2px 4px 2px 0;
+  display: block;
+  content: "";
+  background: currentColor;
+  clip-path: polygon(0 0, 48% 50%, 0 100%, 0 0, 52% 0, 100% 50%, 52% 100%, 52% 0);
+}
+
+.skip-icon::after, .previous-icon::after {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  display: block;
+  width: 2px;
+  height: 12px;
+  border-radius: 2px;
+  background: currentColor;
+  content: "";
+}
+
+.previous-icon {
+  transform: scaleX(-1);
+}
+
