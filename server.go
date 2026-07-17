@@ -43,6 +43,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /admin.js", requireAdmin(http.HandlerFunc(s.handleAdminJS)))
 	requireUser := s.Auth.Require()
 	webFiles := http.FileServer(http.FS(webRoot()))
+	adminFiles := requireAdmin(http.FileServer(http.FS(adminRoot())))
+	mux.Handle("GET /admin/", adminFiles)
 	mux.Handle("GET /{$}", requireUser(http.HandlerFunc(s.handleApp)))
 	mux.Handle("GET /rooms/{room}", requireUser(http.HandlerFunc(s.handleApp)))
 	mux.Handle("GET /assets/", requireUser(http.StripPrefix("/assets/", webFiles)))
