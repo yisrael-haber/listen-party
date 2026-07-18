@@ -79,6 +79,30 @@ func TestUserHasRoomPermission(t *testing.T) {
 	}
 }
 
+func TestUserOverrideReplacesGroupAndAdminPermissions(t *testing.T) {
+	room := Room{
+		ID: "office", Name: "Office",
+		Grants: map[string][]RoomPermission{
+			"staff": {PermissionQueueManage, PermissionPlaybackControl},
+		},
+		UserOverrides: map[string][]RoomPermission{
+			"alice": {PermissionQueueAdd},
+			"admin": {},
+		},
+	}
+	alice := UserInfo{ID: "alice", Groups: []string{"staff"}}
+	if !UserHasRoomPermission(alice, room, PermissionQueueAdd) {
+		t.Fatal("user override permission was not applied")
+	}
+	if UserHasRoomPermission(alice, room, PermissionQueueManage) {
+		t.Fatal("group permission was merged with user override")
+	}
+	admin := UserInfo{ID: "admin", Role: RoleAdmin}
+	if UserHasRoomPermission(admin, room, PermissionPlaybackControl) {
+		t.Fatal("admin permission bypassed explicit user override")
+	}
+}
+
 func TestUserIsRoomAdmin(t *testing.T) {
 	room := Room{ID: "office", AdminGroups: []string{"office-admins"}}
 	if UserIsRoomAdmin(UserInfo{Groups: []string{"staff"}}, room) {

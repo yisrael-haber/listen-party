@@ -23,11 +23,12 @@ var roomPermissions = []RoomPermission{
 }
 
 type Room struct {
-	ID          string                      `json:"id"`
-	Name        string                      `json:"name"`
-	AdminGroups []string                    `json:"admin_groups,omitempty"`
-	Grants      map[string][]RoomPermission `json:"grants,omitempty"`
-	Playback    *Playback                   `json:"-"`
+	ID            string                      `json:"id"`
+	Name          string                      `json:"name"`
+	AdminGroups   []string                    `json:"admin_groups,omitempty"`
+	Grants        map[string][]RoomPermission `json:"grants,omitempty"`
+	UserOverrides map[string][]RoomPermission `json:"user_overrides,omitempty"`
+	Playback      *Playback                   `json:"-"`
 }
 
 type RoomManager struct {
@@ -59,11 +60,12 @@ func (m *RoomManager) Update(configs []Room) {
 			playback = NewPlayback(cfg.ID)
 		}
 		next[cfg.ID] = &Room{
-			ID:          cfg.ID,
-			Name:        cfg.Name,
-			AdminGroups: append([]string(nil), cfg.AdminGroups...),
-			Grants:      cloneRoomGrants(cfg.Grants),
-			Playback:    playback,
+			ID:            cfg.ID,
+			Name:          cfg.Name,
+			AdminGroups:   append([]string(nil), cfg.AdminGroups...),
+			Grants:        cloneRoomGrants(cfg.Grants),
+			UserOverrides: cloneRoomGrants(cfg.UserOverrides),
+			Playback:      playback,
 		}
 		order = append(order, cfg.ID)
 	}
@@ -121,10 +123,11 @@ func (m *RoomManager) List() []Room {
 	for _, id := range m.order {
 		room := m.rooms[id]
 		rooms = append(rooms, Room{
-			ID:          room.ID,
-			Name:        room.Name,
-			AdminGroups: append([]string(nil), room.AdminGroups...),
-			Grants:      cloneRoomGrants(room.Grants),
+			ID:            room.ID,
+			Name:          room.Name,
+			AdminGroups:   append([]string(nil), room.AdminGroups...),
+			Grants:        cloneRoomGrants(room.Grants),
+			UserOverrides: cloneRoomGrants(room.UserOverrides),
 		})
 	}
 	return rooms
@@ -159,6 +162,9 @@ func (m *RoomManager) Close() {
 }
 
 func UserHasRoomPermission(user UserInfo, room Room, permission RoomPermission) bool {
+	if overrides, ok := room.UserOverrides[user.ID]; ok {
+		return slices.Contains(overrides, permission)
+	}
 	if UserIsRoomAdmin(user, room) {
 		return true
 	}
@@ -207,7 +213,8 @@ func cloneRoomGrants(grants map[string][]RoomPermission) map[string][]RoomPermis
 	}
 	clone := make(map[string][]RoomPermission, len(grants))
 	for group, permissions := range grants {
-		clone[group] = append([]RoomPermission(nil), permissions...)
+		clone[group] = make([]RoomPermission, len(permissions))
+		copy(clone[group], permissions)
 	}
 	return clone
 }

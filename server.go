@@ -53,7 +53,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/session", requireUser(http.HandlerFunc(s.handleSession)))
 	mux.Handle("GET /rooms/{room}/api/state", requireUser(http.HandlerFunc(s.handleState)))
 	mux.Handle("GET /rooms/{room}/api/admin", requireUser(http.HandlerFunc(s.handleRoomAdmin)))
-	mux.Handle("PUT /rooms/{room}/api/admin/grants", requireUser(http.HandlerFunc(s.handleRoomAdminGrants)))
+	mux.Handle("PUT /rooms/{room}/api/admin", requireUser(http.HandlerFunc(s.handleRoomAdminUpdate)))
 	mux.Handle("POST /rooms/{room}/api/admin/disconnect", requireUser(http.HandlerFunc(s.handleRoomAdminDisconnect)))
 	mux.Handle("GET /api/search", requireUser(http.HandlerFunc(s.handleSearch)))
 	mux.Handle("GET /api/library", requireUser(http.HandlerFunc(s.handleLibrary)))
@@ -627,14 +627,21 @@ func (s *Server) handleRoomAdmin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "room administration denied", http.StatusForbidden)
 		return
 	}
+	users, err := s.Auth.ListEnabledUsers()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	writeJSON(w, map[string]any{
-		"id":     room.ID,
-		"name":   room.Name,
-		"grants": cloneRoomGrants(room.Grants),
+		"id":             room.ID,
+		"name":           room.Name,
+		"grants":         cloneRoomGrants(room.Grants),
+		"user_overrides": cloneRoomGrants(room.UserOverrides),
+		"users":          users,
 	})
 }
 
-func (s *Server) handleRoomAdminGrants(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRoomAdminUpdate(w http.ResponseWriter, r *http.Request) {
 	room, user, ok := s.roomFromRequest(w, r)
 	if !ok {
 		return
@@ -644,7 +651,8 @@ func (s *Server) handleRoomAdminGrants(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Grants map[string][]RoomPermission `json:"grants"`
+		Grants        map[string][]RoomPermission `json:"grants"`
+		UserOverrides map[string][]RoomPermission `json:"user_overrides"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -664,6 +672,7 @@ func (s *Server) handleRoomAdminGrants(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			cfg.Rooms[i].Grants = normalizeRoomGrants(req.Grants)
+			cfg.Rooms[i].UserOverrides = req.UserOverrides
 			found = true
 			break
 		}
@@ -683,9 +692,10 @@ func (s *Server) handleRoomAdminGrants(w http.ResponseWriter, r *http.Request) {
 	s.configMu.Unlock()
 	updated, _ := s.Rooms.Get(room.ID)
 	writeJSON(w, map[string]any{
-		"id":     updated.ID,
-		"name":   updated.Name,
-		"grants": cloneRoomGrants(updated.Grants),
+		"id":             updated.ID,
+		"name":           updated.Name,
+		"grants":         cloneRoomGrants(updated.Grants),
+		"user_overrides": cloneRoomGrants(updated.UserOverrides),
 	})
 }
 
@@ -724,6 +734,7 @@ func cloneConfig(cfg Config) Config {
 	for i := range cfg.Rooms {
 		cfg.Rooms[i].AdminGroups = append([]string(nil), cfg.Rooms[i].AdminGroups...)
 		cfg.Rooms[i].Grants = cloneRoomGrants(cfg.Rooms[i].Grants)
+		cfg.Rooms[i].UserOverrides = cloneRoomGrants(cfg.Rooms[i].UserOverrides)
 	}
 	return cfg
 }

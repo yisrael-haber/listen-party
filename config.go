@@ -323,6 +323,16 @@ func validateRooms(rooms []Room) error {
 				}
 			}
 		}
+		for userID, permissions := range room.UserOverrides {
+			if userID == "" {
+				return fmt.Errorf("room %q user overrides must not contain an empty user id", room.ID)
+			}
+			for _, permission := range permissions {
+				if !slices.Contains(roomPermissions, permission) {
+					return fmt.Errorf("room %q user %q has unknown permission %q", room.ID, userID, permission)
+				}
+			}
+		}
 	}
 	return nil
 }

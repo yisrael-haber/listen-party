@@ -35,3 +35,6 @@ go.work.sum
 
 # Application data volume for docker
 .data/
+
+# Local agent directories
+.codex/

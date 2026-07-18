@@ -10,6 +10,7 @@ export function renderRoomRow(room = {}) {
   const row = document.createElement("div");
   row.className = "room-row";
   row.roomGrants = cloneGrants(room.grants || {});
+  row.roomUserOverrides = cloneGrants(room.user_overrides || {});
   const fields = document.createElement("div");
   fields.className = "room-fields";
   const main = document.createElement("div");
@@ -54,6 +55,7 @@ export function readRooms() {
       .map((input) => input.value.trim())
       .filter(Boolean),
     grants: cloneGrants(row.roomGrants),
+    user_overrides: cloneGrants(row.roomUserOverrides),
   }));
 }
 

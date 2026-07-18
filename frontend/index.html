@@ -66,7 +66,7 @@
             </button>
             <div class="room-settings-copy">
               <h2>Room permissions</h2>
-              <p class="hint">Manage group access for this room.</p>
+              <p class="hint">Manage access for this room.</p>
             </div>
             <div class="room-settings-actions">
               <span id="roomSettingsStatus" class="status"></span>
@@ -80,6 +80,60 @@
             </div>
           </div>
           <div id="roomSettingsGrants"></div>
+          <section class="room-settings-section">
+            <div class="room-settings-section-copy">
+              <h3 class="room-settings-section-title">User overrides</h3>
+              <p class="hint">
+                An override replaces this user's group permissions in this room.
+              </p>
+            </div>
+            <div
+              id="roomSettingsOverrides"
+              class="room-settings-grants room-settings-overrides"
+            ></div>
+            <button
+              id="addUserOverride"
+              class="secondary compact room-settings-add"
+              type="button"
+            >
+              Add user override
+            </button>
+          </section>
+          <template id="roomSettingsPermissionRow">
+            <div class="room-settings-grant">
+              <div class="room-settings-grant-head">
+                <label class="room-settings-group-field">
+                  <span data-room-settings-subject-label></span>
+                  <input data-room-settings-subject />
+                </label>
+                <button
+                  class="secondary compact room-settings-remove"
+                  data-room-settings-remove
+                  type="button"
+                >
+                  Remove
+                </button>
+              </div>
+              <div class="room-settings-permissions">
+                <label class="checkbox-label">
+                  <input data-permission="queue_add" type="checkbox" />
+                  <span class="permission-text">Add tracks to the queue</span>
+                </label>
+                <label class="checkbox-label">
+                  <input data-permission="queue_manage" type="checkbox" />
+                  <span class="permission-text">Manage queued tracks</span>
+                </label>
+                <label class="checkbox-label">
+                  <input data-permission="playback_control" type="checkbox" />
+                  <span class="permission-text">Control playback</span>
+                </label>
+                <label class="checkbox-label">
+                  <input data-permission="volume_control" type="checkbox" />
+                  <span class="permission-text">Control room volume</span>
+                </label>
+              </div>
+            </div>
+          </template>
         </section>
 
         <section id="libraryPanel" class="search">

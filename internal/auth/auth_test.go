@@ -500,6 +500,42 @@ func TestEnsureUserMetadataRepairsMissingColumns(t *testing.T) {
 	}
 }
 
+func TestListEnabledUsersReturnsOnlySafeFields(t *testing.T) {
+	svc, err := Open(Config{
+		DataDir:             filepath.Join(t.TempDir(), "auth"),
+		BootstrapAdminEmail: "admin@listen-party.local",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	bob, err := createAppUser(svc, "bob", "changed-password", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob.Set("name", "Bob Example")
+	if err := svc.app.Save(bob); err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := createAppUser(svc, "disabled", "changed-password", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled.Set("enabled", false)
+	if err := svc.app.Save(disabled); err != nil {
+		t.Fatal(err)
+	}
+
+	users, err := svc.ListEnabledUsers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 || users[0].ID != bob.Id || users[0].Username != "bob" || users[0].DisplayName != "Bob Example" {
+		t.Fatalf("users = %#v", users)
+	}
+}
+
 func contains(values []string, needle string) bool {
 	for _, value := range values {
 		if value == needle {

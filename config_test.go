@@ -73,6 +73,15 @@ func TestValidateRooms(t *testing.T) {
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("invalid room permission accepted")
 	}
+	cfg.Rooms[1].Grants["staff"] = []RoomPermission{PermissionQueueManage}
+	cfg.Rooms[1].UserOverrides = map[string][]RoomPermission{"user-1": {"unknown"}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("invalid user override permission accepted")
+	}
+	cfg.Rooms[1].UserOverrides = map[string][]RoomPermission{"user-1": {}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("empty user override rejected: %v", err)
+	}
 }
 
 func TestApplyDefaultsNormalizesRooms(t *testing.T) {

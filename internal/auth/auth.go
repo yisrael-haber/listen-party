@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,6 +43,12 @@ type UserInfo struct {
 	Role        Role     `json:"role,omitempty"`
 	Groups      []string `json:"groups"`
 	SessionKey  string   `json:"-"`
+}
+
+type UserSummary struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name,omitempty"`
 }
 
 func (u UserInfo) Display() string {
@@ -272,6 +279,28 @@ func (s *Service) CurrentUser(r *http.Request) (UserInfo, bool) {
 		Groups:      effectiveGroups(record.GetString("groups"), record.GetString("sso_groups")),
 		SessionKey:  requestSessionKey(r, token),
 	}, true
+}
+
+func (s *Service) ListEnabledUsers() ([]UserSummary, error) {
+	records, err := s.app.FindAllRecords(usersCollection)
+	if err != nil {
+		return nil, err
+	}
+	users := make([]UserSummary, 0, len(records))
+	for _, record := range records {
+		if !record.GetBool("enabled") {
+			continue
+		}
+		users = append(users, UserSummary{
+			ID:          record.Id,
+			Username:    record.GetString("username"),
+			DisplayName: record.GetString("name"),
+		})
+	}
+	sort.Slice(users, func(i, j int) bool {
+		return users[i].Username < users[j].Username
+	})
+	return users, nil
 }
 
 func bindSessionCookie(app core.App) {

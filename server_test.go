@@ -686,7 +686,7 @@ func TestRescanDirRequiresConfiguredMusicDir(t *testing.T) {
 	}
 }
 
-func TestRoomAdministratorCanUpdateOnlyRoomGrants(t *testing.T) {
+func TestRoomAdministratorCanUpdateOnlyRoomSettings(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "config.json")
 	cfg := NewDefaultConfigForRoot(root)
@@ -699,7 +699,7 @@ func TestRoomAdministratorCanUpdateOnlyRoomGrants(t *testing.T) {
 		Config:     cfg,
 		ConfigPath: configPath,
 	})
-	req := httptest.NewRequest(http.MethodPut, "/rooms/main/api/admin/grants", strings.NewReader(`{"grants":{"staff":["queue_manage"]}}`))
+	req := httptest.NewRequest(http.MethodPut, "/rooms/main/api/admin", strings.NewReader(`{"grants":{"staff":["queue_manage"]},"user_overrides":{"user-1":["queue_add"]}}`))
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -712,6 +712,10 @@ func TestRoomAdministratorCanUpdateOnlyRoomGrants(t *testing.T) {
 	if !UserHasRoomPermission(UserInfo{Groups: []string{"staff"}}, *room, PermissionQueueManage) {
 		t.Fatal("updated grant did not apply immediately")
 	}
+	if !UserHasRoomPermission(UserInfo{ID: "user-1", Groups: []string{"staff"}}, *room, PermissionQueueAdd) ||
+		UserHasRoomPermission(UserInfo{ID: "user-1", Groups: []string{"staff"}}, *room, PermissionQueueManage) {
+		t.Fatalf("user override was not applied: %#v", room.UserOverrides)
+	}
 	loaded, err := LoadConfig(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -721,6 +725,38 @@ func TestRoomAdministratorCanUpdateOnlyRoomGrants(t *testing.T) {
 	}
 	if loaded.Revision != 2 {
 		t.Fatalf("config revision = %d, want 2", loaded.Revision)
+	}
+}
+
+func TestRoomAdministratorReceivesOverrideSettings(t *testing.T) {
+	server := testServer(&Server{
+		Auth: fakeAuth{
+			user:  UserInfo{Username: "alice", Groups: []string{"room-admins"}},
+			users: []UserSummary{{ID: "user-1", Username: "bob", DisplayName: "Bob"}},
+		},
+		Config: Config{Rooms: []Room{{
+			ID: "main", Name: "Main", AdminGroups: []string{"room-admins"},
+			UserOverrides: map[string][]RoomPermission{"user-1": {}},
+		}}},
+	}).Handler()
+	req := httptest.NewRequest(http.MethodGet, "/rooms/main/api/admin", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("room admin status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Users         []UserSummary              `json:"users"`
+		UserOverrides map[string]json.RawMessage `json:"user_overrides"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Users) != 1 || response.Users[0].ID != "user-1" || response.Users[0].Username != "bob" || response.Users[0].DisplayName != "Bob" {
+		t.Fatalf("users = %#v", response.Users)
+	}
+	if got := string(response.UserOverrides["user-1"]); got != "[]" {
+		t.Fatalf("empty user override = %s, want []", got)
 	}
 }
 
@@ -809,7 +845,19 @@ func TestGlobalConfigUpdateRejectsStaleRevision(t *testing.T) {
 }
 
 type fakeAuth struct {
-	user UserInfo
+	user  UserInfo
+	users []UserSummary
+}
+
+func (a fakeAuth) ListEnabledUsers() ([]UserSummary, error) {
+	if a.users != nil {
+		return a.users, nil
+	}
+	return []UserSummary{{
+		ID:          a.user.ID,
+		Username:    a.user.Username,
+		DisplayName: a.user.DisplayName,
+	}}, nil
 }
 
 func getStatePermissions(t *testing.T, handler http.Handler) []RoomPermission {

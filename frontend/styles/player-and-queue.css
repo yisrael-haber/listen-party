@@ -8,7 +8,8 @@
   line-height: 1.1;
 }
 
-.room-settings-group-field input {
+.room-settings-group-field input,
+.room-settings-group-field select {
   min-height: 36px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.025);
@@ -126,6 +127,29 @@
 .room-settings-add:focus-visible {
   border-color: rgba(111, 191, 143, 0.28);
   background: rgba(111, 191, 143, 0.045);
+}
+
+.room-settings-section-title {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.room-settings-section {
+  margin-top: 20px;
+}
+
+.room-settings-section-copy .hint {
+  margin: 4px 0 10px;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.room-settings-overrides {
+  gap: 0;
+}
+
+.room-settings-overrides .room-settings-grant {
+  border-bottom: 0;
 }
 
 .playlist-toolbar {

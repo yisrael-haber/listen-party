@@ -17,7 +17,7 @@ authentication are stored beside the configuration file.
 - Optional per-room Auto-DJ playback in shuffled library or playlist cycles when the queue is exhausted.
 - Persistent user playlists with owner/admin editing.
 - Native folder selection for importing indexed network-share tracks into playlists.
-- Room permissions for everyone or selected authentication groups.
+- Room permissions for everyone, authentication groups, or individual users.
 - Room administrators delegated through authentication groups.
 - Local username/password authentication and optional Keycloak login.
 - Admin UI for global configuration, rooms, room-admin assignment, bans, and rescans.
@@ -228,9 +228,10 @@ migrated and rewritten with an open first/default room.
 Every enabled user can see, enter, and listen to every room. Permissions only
 control actions within a room.
 
-Room grants are positive and additive. A user receives the union of grants for
+Group grants are positive and additive. A user receives the union of grants for
 their groups and the reserved `everyone` principal. There are no deny rules.
-Application admins implicitly receive every room permission.
+Application admins implicitly receive every room permission unless they have a
+user override.
 
 | Permission | Allows |
 | --- | --- |
@@ -253,6 +254,9 @@ Example restricted room:
       "queue_manage",
       "playback_control"
     ]
+  },
+  "user_overrides": {
+    "pocketbase-user-id": ["queue_add", "playback_control"]
   }
 }
 ```
@@ -260,11 +264,15 @@ Example restricted room:
 Adding an `everyone` grant makes that permission available to every enabled
 user. Removing it does not affect group grants.
 
-Groups listed in `admin_groups` can edit that room's grants from the room
-settings control in the regular application and implicitly receive every
-permission in that room. Application admins administer every room and remain
-responsible for assigning room administrator groups, creating rooms, and
-changing global configuration.
+Use **Room permissions** in the application for routine changes. Add a group
+grant or select a user for an override. A user override is that user's exact
+action-permission set: it replaces their default, group, and administrator
+action permissions. Leave every permission unchecked for listen-only access.
+It does not remove room-settings administration. The picker avoids needing
+PocketBase's internal UI or user IDs.
+
+Groups in `admin_groups` can manage grants and overrides for that room. App
+admins manage rooms, administrator groups, and global configuration.
 
 Room administrators can also disconnect active listeners from the listener
 menu. Disconnecting terminates every active tab for that listener, expires the
