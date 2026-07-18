@@ -1,6 +1,6 @@
+/* global Sortable */
 import {
   queueSortable,
-  queueDragActive,
   queueReorderPending,
   pendingQueueState,
   roomAPI,

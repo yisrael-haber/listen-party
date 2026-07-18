@@ -1,4 +1,4 @@
-import { seeking, lastState, setSeeking } from "./state.js";
+import { seeking, setSeeking } from "./state.js";
 import audio from "./audio.js";
 import permissions from "./permissions.js";
 import formatting from "./formatting.js";

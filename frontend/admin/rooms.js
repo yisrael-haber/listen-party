@@ -1,9 +1,5 @@
 import { roomsList, roomCounter, setRoomCounter } from "./state.js";
-import {
-  renderListItem,
-  updateListRemoveButtons,
-  listEditor,
-} from "./list-editor.js";
+import { listEditor } from "./list-editor.js";
 
 export function renderRooms(rooms) {
   roomsList.replaceChildren(...rooms.map(renderRoomRow));

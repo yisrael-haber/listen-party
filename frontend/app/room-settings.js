@@ -1,6 +1,5 @@
 import {
   canAdministerCurrentRoom,
-  currentRoomID,
   roomAPI,
   roomSaveFeedbackTimer,
   minimumRoomSaveFeedbackMS,

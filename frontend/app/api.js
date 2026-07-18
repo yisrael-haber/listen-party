@@ -1,4 +1,4 @@
-import { currentRoomID, roomAPI } from "./state.js";
+import { roomAPI } from "./state.js";
 import renderStateModule from "./render-state.js";
 
 async function api(path, options = {}) {

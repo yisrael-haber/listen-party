@@ -1,20 +1,14 @@
 import {
   currentRoomID,
-  currentPermissions,
   canAdministerCurrentRoom,
-  lastState,
   setLastState,
   setLastStateReceivedAt,
-  queueDragActive,
   setQueueDragActive,
-  queueReorderPending,
   setQueueReorderPending,
-  pendingQueueState,
   setPendingQueueState,
   setCurrentRoomID,
   setCurrentPermissions,
   setCanAdministerCurrentRoom,
-  roomAPI,
 } from "./state.js";
 import apiModule from "./api.js";
 import audioModule from "./audio.js";

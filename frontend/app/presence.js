@@ -1,4 +1,4 @@
-import { canAdministerCurrentRoom, currentRoomID, roomAPI } from "./state.js";
+import { canAdministerCurrentRoom, roomAPI } from "./state.js";
 import apiModule from "./api.js";
 
 let presenceEl, presenceButton, listenerListEl;

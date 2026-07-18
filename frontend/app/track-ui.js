@@ -60,7 +60,7 @@ function commandButton(text, body) {
   label.textContent = text;
   button.append(label);
   button.hidden = !permissions.canRunCommand(body.action);
-  button.addEventListener("click", async (event) => {
+  button.addEventListener("click", async (_event) => {
     await apiModule.command(body);
     button.blur();
   });

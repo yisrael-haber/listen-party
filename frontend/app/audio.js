@@ -10,7 +10,6 @@ import {
   setEvents,
 } from "./state.js";
 import seek from "./seek.js";
-import permissions from "./permissions.js";
 import volume from "./volume.js";
 import apiModule from "./api.js";
 
