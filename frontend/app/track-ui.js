@@ -68,8 +68,12 @@ function commandButton(text, body) {
 }
 
 function commandIcon(action) {
-  if (action === "queue_add") return "≡+";
-  if (action === "play_now" || action === "play") return "▶";
+  if (action === "queue_add") {
+    return "≡+";
+  }
+  if (action === "play_now" || action === "play") {
+    return "▶";
+  }
   return "";
 }
 
@@ -94,7 +98,9 @@ function trashButton(label, onClick) {
 }
 
 function standardTrackCommands(dedupeKey) {
-  if (!dedupeKey) return [];
+  if (!dedupeKey) {
+    return [];
+  }
   return [
     ["Queue", { action: "queue_add", dedupe_key: dedupeKey }],
     ["Play", { action: "play_now", dedupe_key: dedupeKey }],

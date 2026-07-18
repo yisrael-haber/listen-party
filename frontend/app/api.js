@@ -6,8 +6,12 @@ async function api(path, options = {}) {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
-  if (!res.ok) throw new Error(await res.text());
-  if (res.status === 204) return null;
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+  if (res.status === 204) {
+    return null;
+  }
   return res.json();
 }
 

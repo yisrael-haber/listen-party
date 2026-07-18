@@ -28,7 +28,9 @@ function init() {
     autoDJSourceButton.setAttribute("aria-expanded", "true");
     try {
       const availablePlaylists = await apiModule.api("/api/playlists");
-      if (!autoDJSourceMenu.hidden) renderAutoDJSourceMenu(availablePlaylists);
+      if (!autoDJSourceMenu.hidden) {
+        renderAutoDJSourceMenu(availablePlaylists);
+      }
     } catch (err) {
       console.error(err);
       loading.textContent = err.message || "Could not load shuffle sources";

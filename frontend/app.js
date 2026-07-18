@@ -45,7 +45,9 @@ const roomSettingsView = document.getElementById("roomSettingsView");
 
 document.addEventListener("click", (event) => {
   playlists.closePlaylistAddMenus();
-  if (!event.target.closest(".auto-dj-control")) autoDJ.closeAutoDJSourceMenu();
+  if (!event.target.closest(".auto-dj-control")) {
+    autoDJ.closeAutoDJSourceMenu();
+  }
   if (!event.target.closest(".queue-changes-menu")) {
     queueChangesListEl.hidden = true;
     queueChangesButton.setAttribute("aria-expanded", "false");
@@ -63,7 +65,9 @@ document.addEventListener("keydown", (event) => {
   }
   playlists.closePlaylistAddMenus();
   autoDJ.closeAutoDJSourceMenu();
-  if (!roomSettingsView.hidden) roomSettings.closeRoomSettings();
+  if (!roomSettingsView.hidden) {
+    roomSettings.closeRoomSettings();
+  }
   listenerListEl.hidden = true;
   presenceButton.setAttribute("aria-expanded", "false");
   queueChangesListEl.hidden = true;

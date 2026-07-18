@@ -41,7 +41,9 @@ function init() {
     const roomID = decodeURIComponent(
       location.pathname.match(/^\/rooms\/([^/]+)/)?.[1] || "",
     );
-    if (roomID) switchRoom(roomID, false).catch(console.error);
+    if (roomID) {
+      switchRoom(roomID, false).catch(console.error);
+    }
   });
 
   logoutForm.addEventListener("submit", () => {
@@ -83,12 +85,16 @@ async function loadRooms(info = null) {
     Boolean(info.room_administration?.[currentRoomID]),
   );
   roomSettingsButton.hidden = !canAdministerCurrentRoom;
-  if (!canAdministerCurrentRoom) roomSettingsModule.closeRoomSettings();
+  if (!canAdministerCurrentRoom) {
+    roomSettingsModule.closeRoomSettings();
+  }
   return true;
 }
 
 async function switchRoom(roomID, updateHistory = true) {
-  if (!roomID || roomID === currentRoomID) return;
+  if (!roomID || roomID === currentRoomID) {
+    return;
+  }
   roomSelect.disabled = true;
   try {
     const [info, state] = await Promise.all([
@@ -110,10 +116,13 @@ async function switchRoom(roomID, updateHistory = true) {
     setQueueReorderPending(false);
     setPendingQueueState(null);
     setCanAdministerCurrentRoom(false);
-    if (updateHistory)
+    if (updateHistory) {
       history.pushState(null, "", `/rooms/${encodeURIComponent(roomID)}`);
+    }
 
-    if (!(await loadRooms(info))) return;
+    if (!(await loadRooms(info))) {
+      return;
+    }
     volumeModule.restoreVolumePreferences();
     renderStateModule.renderState(state);
     audioModule.connectEvents();

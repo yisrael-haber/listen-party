@@ -96,21 +96,30 @@ function handleQueueReorderKey(event, queueItemID) {
   if (
     !["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key) ||
     queueReorderPending
-  )
+  ) {
     return;
+  }
   const item = event.currentTarget.closest(".queue-item");
-  if (!item) return;
+  if (!item) {
+    return;
+  }
   let before = null;
   if (event.key === "ArrowUp") {
     before = item.previousElementSibling;
-    if (!before) return;
+    if (!before) {
+      return;
+    }
   } else if (event.key === "ArrowDown") {
     const next = item.nextElementSibling;
-    if (!next) return;
+    if (!next) {
+      return;
+    }
     before = next.nextElementSibling;
   } else if (event.key === "Home") {
     before = queueEl.firstElementChild;
-    if (before === item) return;
+    if (before === item) {
+      return;
+    }
   }
   event.preventDefault();
   const beforeQueueItemID = before ? Number(before.dataset.queueItemId) : 0;
@@ -139,7 +148,9 @@ function renderQueueChanges(actions) {
         [action.username, "queue-change-username"],
       ];
       for (const [value, className] of metadata) {
-        if (!value) continue;
+        if (!value) {
+          continue;
+        }
         const field = document.createElement("span");
         field.className = className;
         field.textContent = value;
@@ -210,7 +221,9 @@ function initQueueSortable() {
 }
 
 function updateQueueSortable() {
-  if (!queueSortable) return;
+  if (!queueSortable) {
+    return;
+  }
   const enabled =
     permissions.hasRoomPermission("queue_manage") && !queueReorderPending;
   queueSortable.option("disabled", !enabled);
@@ -220,12 +233,15 @@ function updateQueueSortable() {
 function applyPendingQueueState() {
   const state = pendingQueueState;
   setPendingQueueState(null);
-  if (state) renderStateModule.renderState(state);
+  if (state) {
+    renderStateModule.renderState(state);
+  }
 }
 
 async function submitQueueReorder(queueItemID, beforeQueueItemID) {
-  if (queueReorderPending || !permissions.hasRoomPermission("queue_manage"))
+  if (queueReorderPending || !permissions.hasRoomPermission("queue_manage")) {
     return;
+  }
   setQueueReorderPending(true);
   updateQueueSortable();
   try {

@@ -98,7 +98,9 @@ export async function loadConfig() {
 export function init() {
   configForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (configSaveButton.disabled) return;
+    if (configSaveButton.disabled) {
+      return;
+    }
     clearTimeout(saveFeedbackTimer);
     configSaveButton.disabled = true;
     configSaveButton.textContent = "Saving...";
@@ -116,7 +118,9 @@ export function init() {
         saveRequest,
         delay(minimumSaveFeedbackMS),
       ]);
-      if (result.error) throw result.error;
+      if (result.error) {
+        throw result.error;
+      }
       renderConfig(result.value);
       setStatus("Saved", "ok");
       configSaveButton.textContent = "Saved";

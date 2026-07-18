@@ -13,12 +13,16 @@ export function setRescanStatus(message, kind = "") {
 }
 
 export function formatScanTime(value) {
-  if (!value || value === "0001-01-01T00:00:00Z") return "Never rescanned";
+  if (!value || value === "0001-01-01T00:00:00Z") {
+    return "Never rescanned";
+  }
   return `Last rescanned ${new Date(value).toLocaleString()}`;
 }
 
 export function formatRate(value) {
-  if (!Number.isFinite(value)) return "0/s";
+  if (!Number.isFinite(value)) {
+    return "0/s";
+  }
   return `${value.toFixed(value >= 10 ? 0 : 1)}/s`;
 }
 
@@ -84,7 +88,9 @@ export async function rescanMusicDir(path, button) {
       await loadLibraryStatus();
       return;
     }
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      throw new Error(await res.text());
+    }
     setRescanStatus("Folder rescanned", "ok");
     await loadLibraryStatus();
   } catch (err) {
@@ -106,7 +112,9 @@ export function init() {
         await loadLibraryStatus();
         return;
       }
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
       setRescanStatus("Library rescanned", "ok");
       await loadLibraryStatus();
     } catch (err) {

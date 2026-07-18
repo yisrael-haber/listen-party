@@ -25,7 +25,9 @@ function init() {
 
   volumeInput.addEventListener("input", () => {
     const next = Number(volumeInput.value);
-    if (!Number.isFinite(next)) return;
+    if (!Number.isFinite(next)) {
+      return;
+    }
     if (volumeMode === "room") {
       applyAudioSettings(next, false);
     } else {
@@ -41,8 +43,9 @@ function init() {
     if (
       volumeMode !== "room" ||
       !permissions.hasRoomPermission("volume_control")
-    )
+    ) {
       return;
+    }
     try {
       await apiModule.command({
         action: "room_audio",
@@ -63,7 +66,9 @@ function init() {
 
   muteButton.addEventListener("click", async () => {
     if (volumeMode === "room") {
-      if (!permissions.hasRoomPermission("volume_control")) return;
+      if (!permissions.hasRoomPermission("volume_control")) {
+        return;
+      }
       const roomAudio = lastState?.room_audio || {
         volume: defaultVolume,
         muted: false,
@@ -75,7 +80,9 @@ function init() {
       return;
     }
     if (localMuted || localVolume === 0) {
-      if (localVolume === 0) setLocalVolume(defaultVolume);
+      if (localVolume === 0) {
+        setLocalVolume(defaultVolume);
+      }
       setLocalMuted(false);
     } else {
       setLocalMuted(true);
@@ -96,7 +103,9 @@ function renderVolumeButton() {
 let audioEl;
 
 function applyAudioSettings(value, muted) {
-  if (!audioEl) audioEl = document.getElementById("audio");
+  if (!audioEl) {
+    audioEl = document.getElementById("audio");
+  }
   const max = Number(volumeInput.max) || 1;
   audioEl.volume = Math.max(0, Math.min(max, value));
   audioEl.muted = Boolean(muted) || audioEl.volume === 0;
@@ -109,7 +118,9 @@ function volumeModeStorageKey() {
 }
 
 function restoreVolumePreferences() {
-  if (!audioEl) audioEl = document.getElementById("audio");
+  if (!audioEl) {
+    audioEl = document.getElementById("audio");
+  }
   const storedVolume = Number(storageGet(localVolumeStorageKey));
   setLocalVolume(
     Number.isFinite(storedVolume)

@@ -52,7 +52,9 @@ function init() {
   playlistSelect.addEventListener("change", async () => {
     playlistImportStatus.textContent = "";
     setSelectedPlaylistID(Number(playlistSelect.value));
-    if (!selectedPlaylistID) return;
+    if (!selectedPlaylistID) {
+      return;
+    }
     storageSet(playlistStorageKey, selectedPlaylistID);
     await loadPlaylistDetail(selectedPlaylistID);
     searchModule.runSearch().catch(console.error);
@@ -60,8 +62,12 @@ function init() {
 
   deletePlaylistButton.addEventListener("click", async () => {
     const playlist = playlists.find((item) => item.id === selectedPlaylistID);
-    if (!playlist?.can_edit || !confirm(`Delete playlist "${playlist.name}"?`))
+    if (
+      !playlist?.can_edit ||
+      !confirm(`Delete playlist "${playlist.name}"?`)
+    ) {
       return;
+    }
     await apiModule.api(`/api/playlists/${playlist.id}`, { method: "DELETE" });
     setSelectedPlaylistID(0);
     await loadPlaylists(0);
@@ -78,7 +84,9 @@ function init() {
   playlistCreateForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const name = playlistNameInput.value.trim();
-    if (!name) return;
+    if (!name) {
+      return;
+    }
     const playlist = await apiModule.api("/api/playlists", {
       method: "POST",
       body: JSON.stringify({ name }),
@@ -96,7 +104,9 @@ function init() {
 
   playlistFolderInput.addEventListener("change", async () => {
     const playlist = playlists.find((item) => item.id === selectedPlaylistID);
-    if (!playlist?.can_edit) return;
+    if (!playlist?.can_edit) {
+      return;
+    }
     const files = [...playlistFolderInput.files]
       .filter((file) => file.name.toLowerCase().endsWith(".mp3"))
       .map((file) => ({
@@ -235,11 +245,17 @@ function setPlaylistButtonContent(button) {
 
 function closePlaylistAddMenus(except = null) {
   document.querySelectorAll(".playlist-add-menu").forEach((wrap) => {
-    if (wrap === except) return;
+    if (wrap === except) {
+      return;
+    }
     const menu = wrap.querySelector(".playlist-add-options");
     const button = wrap.querySelector("button");
-    if (menu) menu.hidden = true;
-    if (button) button.setAttribute("aria-expanded", "false");
+    if (menu) {
+      menu.hidden = true;
+    }
+    if (button) {
+      button.setAttribute("aria-expanded", "false");
+    }
   });
 }
 

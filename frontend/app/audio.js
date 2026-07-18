@@ -34,7 +34,9 @@ function init() {
   }
 
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) syncCurrentAudio();
+    if (!document.hidden) {
+      syncCurrentAudio();
+    }
   });
 
   audioEl.addEventListener("timeupdate", () => {
@@ -67,7 +69,9 @@ function hasMedia() {
 }
 
 function mediaURL(track, suffix = "") {
-  if (!track || !track.id) return "";
+  if (!track || !track.id) {
+    return "";
+  }
   return `/media/${track.id}${suffix}?v=${encodeURIComponent(track.dedupe_key || "")}`;
 }
 
@@ -131,8 +135,12 @@ function playbackPosition(state) {
 }
 
 function setSyncedTime(target) {
-  if (!Number.isFinite(target)) return;
-  if (audioEl.readyState < HTMLMediaElement.HAVE_METADATA) return;
+  if (!Number.isFinite(target)) {
+    return;
+  }
+  if (audioEl.readyState < HTMLMediaElement.HAVE_METADATA) {
+    return;
+  }
   if (Math.abs(audioEl.currentTime - target) > syncToleranceSeconds) {
     try {
       audioEl.currentTime = target;
@@ -164,15 +172,21 @@ function syncAudio(state, correctTime = true) {
   }
   if (state.paused) {
     seek.setSeekUI(target);
-    if (correctTime) setSyncedTime(target);
+    if (correctTime) {
+      setSyncedTime(target);
+    }
     if (!audioEl.paused) {
       audioEl.pause();
     }
     return;
   }
 
-  if (correctTime) setSyncedTime(target);
-  if (audioEl.paused) playAudio();
+  if (correctTime) {
+    setSyncedTime(target);
+  }
+  if (audioEl.paused) {
+    playAudio();
+  }
   seek.setSeekUI(
     audioEl.readyState >= HTMLMediaElement.HAVE_METADATA
       ? audioEl.currentTime
@@ -222,7 +236,9 @@ function connectEvents() {
   const roomID = currentRoomID;
   setEvents(new EventSource(`/rooms/${encodeURIComponent(roomID)}/events`));
   events.addEventListener("state", (event) => {
-    if (roomID !== currentRoomID) return;
+    if (roomID !== currentRoomID) {
+      return;
+    }
     try {
       renderState(JSON.parse(event.data));
     } catch (err) {
@@ -230,14 +246,17 @@ function connectEvents() {
     }
   });
   events.addEventListener("disconnect", () => {
-    if (roomID !== currentRoomID) return;
+    if (roomID !== currentRoomID) {
+      return;
+    }
     forceLogout();
   });
   events.addEventListener("error", async () => {
     try {
       const info = await apiModule.api("/api/session");
-      if (roomID === currentRoomID && info.disconnected?.[roomID])
+      if (roomID === currentRoomID && info.disconnected?.[roomID]) {
         forceLogout();
+      }
     } catch {
       // A network outage is not an administrative disconnect.
     }

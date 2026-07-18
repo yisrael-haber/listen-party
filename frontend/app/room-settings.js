@@ -76,7 +76,9 @@ function init() {
 }
 
 async function openRoomSettings() {
-  if (!canAdministerCurrentRoom) return;
+  if (!canAdministerCurrentRoom) {
+    return;
+  }
   libraryPanel.hidden = true;
   roomSettingsView.hidden = false;
   roomSettingsButton.setAttribute("aria-expanded", "true");
@@ -184,11 +186,15 @@ function readRoomSettingsGrants() {
   )) {
     const input = row.querySelector(".room-settings-group");
     const group = (input.dataset.group || input.value).trim();
-    if (!group) continue;
+    if (!group) {
+      continue;
+    }
     const permissions = [
       ...row.querySelectorAll("[data-permission]:checked"),
     ].map((checkbox) => checkbox.dataset.permission);
-    if (permissions.length) grants[group] = [...new Set(permissions)];
+    if (permissions.length) {
+      grants[group] = [...new Set(permissions)];
+    }
   }
   return grants;
 }

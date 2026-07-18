@@ -3,7 +3,9 @@ export async function api(path, options = {}) {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
   return res.json();
 }
 

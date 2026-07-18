@@ -62,8 +62,12 @@ function renderState(state) {
     } else {
       const lastRevision = Number(lastState.revision);
       const lastServerTime = Date.parse(lastState.server_time);
-      if (revision < lastRevision) return;
-      if (revision === lastRevision && serverTime < lastServerTime) return;
+      if (revision < lastRevision) {
+        return;
+      }
+      if (revision === lastRevision && serverTime < lastServerTime) {
+        return;
+      }
     }
   }
   if (queueDragActive || queueReorderPending) {
@@ -121,7 +125,9 @@ function renderState(state) {
   };
   autoDJButton.disabled = !canManageQueue;
   autoDJSourceButton.disabled = !canManageQueue;
-  if (!canManageQueue) autoDJModule.closeAutoDJSourceMenu();
+  if (!canManageQueue) {
+    autoDJModule.closeAutoDJSourceMenu();
+  }
   autoDJButton.dataset.enabled = String(Boolean(autoDJ.enabled));
   autoDJButton.setAttribute("aria-pressed", String(Boolean(autoDJ.enabled)));
   autoDJButton.title = autoDJ.enabled ? "Disable Auto-DJ" : "Enable Auto-DJ";

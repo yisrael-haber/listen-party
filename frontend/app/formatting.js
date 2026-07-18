@@ -1,5 +1,7 @@
 function formatTime(seconds) {
-  if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    seconds = 0;
+  }
   const total = Math.floor(seconds);
   const minutes = Math.floor(total / 60);
   const rest = String(total % 60).padStart(2, "0");
@@ -7,12 +9,16 @@ function formatTime(seconds) {
 }
 
 function trackTitle(track) {
-  if (!track) return "";
+  if (!track) {
+    return "";
+  }
   return (track.title || `Track ${track.id || ""}`).trim();
 }
 
 function trackContext(track) {
-  if (!track) return "";
+  if (!track) {
+    return "";
+  }
   return [track.artist, track.album].filter(Boolean).join(" · ");
 }
 
@@ -41,7 +47,9 @@ function emptyHint(text, tag = "p") {
 
 function formatActionTime(value) {
   const time = Date.parse(value || "");
-  if (!Number.isFinite(time)) return "";
+  if (!Number.isFinite(time)) {
+    return "";
+  }
   return new Intl.DateTimeFormat(undefined, {
     hour: "2-digit",
     minute: "2-digit",
