@@ -57,17 +57,24 @@ function hasMedia() {
 }
 
 function mediaURL(track, suffix = "") {
-	return `/media/${track.id}${suffix}?v=${encodeURIComponent(track.dedupe_key || "")}`;
+  if (!track || !track.id) return "";
+  return `/media/${track.id}${suffix}?v=${encodeURIComponent(track.dedupe_key || "")}`;
 }
 
 function loadMedia(track) {
-	const src = mediaURL(track);
-	if (audioEl.getAttribute("src") === src) {
-		return;
-	}
-	audioEl.src = src;
-	audioEl.load();
-	loadArtwork(track);
+  const src = mediaURL(track);
+  if (!src) {
+    audioEl.removeAttribute("src");
+    audioEl.load();
+    clearArtwork();
+    return;
+  }
+  if (audioEl.getAttribute("src") === src) {
+    return;
+  }
+  audioEl.src = src;
+  audioEl.load();
+  loadArtwork(track);
 }
 
 function clearArtwork() {
@@ -76,8 +83,9 @@ function clearArtwork() {
 }
 
 function loadArtwork(track) {
-	artworkEl.hidden = true;
-	artworkEl.src = mediaURL(track, "/artwork");
+  const url = mediaURL(track, "/artwork");
+  artworkEl.hidden = true;
+  artworkEl.src = url || "";
 }
 
 function samePlaybackTimeline(a, b) {
