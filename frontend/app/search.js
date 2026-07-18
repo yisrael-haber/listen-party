@@ -52,7 +52,7 @@ async function runSearch() {
     return;
   }
   resultsEl.replaceChildren(
-    ...(tracks.length
+    ...(tracks?.length
       ? tracks.map((track) =>
           trackUi.trackRow(
             track,
