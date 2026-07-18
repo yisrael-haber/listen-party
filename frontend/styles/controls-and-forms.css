@@ -1,0 +1,359 @@
+.queue-change-empty {
+  padding: 10px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+button {
+  min-height: 38px;
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+button.secondary {
+  min-width: 64px;
+  background: transparent;
+}
+
+button.danger:hover {
+  border-color: #c97070;
+  color: #f0a0a0;
+}
+
+button.compact {
+  min-height: 30px;
+  padding: 5px 12px;
+  font-size: 0.86rem;
+}
+
+#clearHistory,
+#clearQueue,
+#newPlaylist,
+.playlist-import-row,
+.playlist-create button,
+#closeRoomSettings,
+#saveRoomSettings,
+.player-bar .icon-button,
+.player-bar .auto-dj-source,
+.volume-mode {
+  border-color: transparent;
+  background: transparent;
+}
+
+#clearHistory:hover,
+#clearHistory:focus-visible,
+#clearQueue:hover,
+#clearQueue:focus-visible,
+#newPlaylist:hover,
+#newPlaylist:focus-visible,
+.playlist-import-row:hover,
+.playlist-import-row:focus-visible,
+.playlist-create button:hover,
+.playlist-create button:focus-visible,
+#closeRoomSettings:hover,
+#closeRoomSettings:focus-visible,
+#saveRoomSettings:hover,
+#saveRoomSettings:focus-visible,
+.player-bar .icon-button:hover,
+.player-bar .icon-button:focus-visible,
+.player-bar .auto-dj-source:hover,
+.player-bar .auto-dj-source:focus-visible,
+.volume-mode:hover,
+.volume-mode:focus-visible {
+  border-color: rgba(255, 255, 255, 0.085);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.status {
+  min-height: 1.2em;
+  align-self: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.status[data-kind="ok"] {
+  color: var(--accent-strong);
+}
+
+.status[data-kind="error"] {
+  color: #e28b8b;
+}
+
+.hint {
+  min-height: 1.2em;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.empty-state {
+  margin: 12px 0;
+  color: rgba(167, 171, 179, 0.72);
+  font-size: 0.88rem;
+}
+
+.search,
+.queue-panel,
+.history-panel,
+.config-panel {
+  margin-bottom: 20px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.search,
+.config-panel {
+  max-width: 860px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.admin-page .config-panel {
+  max-width: none;
+}
+
+.library-rail .search {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 18px;
+  background: rgba(20, 21, 24, 0.74);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+#libraryPanel[hidden] {
+  display: none;
+}
+
+.library-rail form {
+  grid-template-columns: 1fr;
+}
+
+.library-rail .section-head {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.library-rail #libraryStatus {
+  display: none;
+}
+
+.library-rail #searchForm {
+  flex: 0 0 auto;
+  padding: 16px 14px 10px;
+}
+
+.library-rail #results,
+.library-rail .playlists-view {
+  padding-inline: 14px 10px;
+  padding-bottom: 14px;
+}
+
+.search-field {
+  display: grid;
+  grid-template-columns: auto minmax(118px, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.search-field span {
+  white-space: nowrap;
+}
+
+.search-field select {
+  min-height: 38px;
+  padding: 7px 34px 7px 13px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 0.9rem;
+}
+
+.search-box {
+  position: relative;
+  display: block;
+}
+
+.search-box input {
+  min-height: 44px;
+  padding-right: 48px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.search-icon {
+  position: absolute;
+  top: 50%;
+  right: 18px;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--muted);
+  border-radius: 50%;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.search-icon::after {
+  position: absolute;
+  right: -6px;
+  bottom: -4px;
+  width: 7px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--muted);
+  content: "";
+  transform: rotate(45deg);
+  transform-origin: left center;
+}
+
+.search-box:focus-within .search-icon {
+  border-color: var(--accent-strong);
+}
+
+.search-box:focus-within .search-icon::after {
+  background: var(--accent-strong);
+}
+
+form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+input,
+textarea,
+select {
+  color-scheme: dark;
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+}
+
+select option {
+  background: #1b1c20;
+  color: var(--text);
+}
+
+select option:checked {
+  background: #26372e;
+  color: var(--accent-strong);
+}
+
+textarea {
+  min-height: 96px;
+  line-height: 1.35;
+  resize: vertical;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: 2px solid rgba(111, 191, 143, 0.6);
+  outline-offset: 2px;
+}
+
+#configForm {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+
+#configForm label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+#configForm input,
+#configForm textarea {
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #1e1f23;
+  color: var(--text);
+}
+
+#configForm button {
+  border-radius: 6px;
+}
+
+button.icon-only {
+  display: inline-grid;
+  place-items: center;
+  min-width: 34px;
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.config-section {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.config-section:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.config-section h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.98rem;
+  line-height: 1.2;
+  font-weight: 760;
+}
+
+.config-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.library-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 1.2em;
+}

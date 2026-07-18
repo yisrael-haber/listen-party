@@ -1,0 +1,434 @@
+.room-settings-group-field {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.1;
+}
+
+.room-settings-group-field input {
+  min-height: 36px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.room-settings-group-field input[readonly] {
+  border-color: transparent;
+  background: transparent;
+  padding-inline: 0;
+  color: var(--text);
+  font-weight: 750;
+}
+
+.room-settings-remove {
+  align-self: end;
+  min-height: 40px;
+  border-color: transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #e0a0a0;
+}
+
+.room-settings-remove:hover,
+.room-settings-remove:focus-visible {
+  border-color: rgba(224, 160, 160, 0.35);
+  background: rgba(224, 160, 160, 0.07);
+  color: #f0b0b0;
+}
+
+.room-settings-permissions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+}
+
+.room-settings-permissions .checkbox-label {
+  position: relative;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.room-settings-permissions .checkbox-label:hover,
+.room-settings-permissions .checkbox-label:focus-within {
+  color: var(--accent-strong);
+}
+
+.permission-text {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.86rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-settings-permissions .checkbox-label.checked,
+.room-settings-permissions .checkbox-label:has(input:checked) {
+  background: transparent;
+}
+
+.room-settings-permissions .checkbox-label.checked .permission-text,
+.room-settings-permissions .checkbox-label:has(input:checked) .permission-text {
+  color: var(--accent-strong);
+}
+
+.room-settings-permissions .checkbox-label input {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 4px;
+  accent-color: var(--accent);
+}
+
+.room-settings-actions {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.room-settings-actions .status {
+  flex: 1;
+  max-width: 120px;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-settings-add {
+  display: block;
+  width: auto;
+  min-height: 34px;
+  margin: 0 auto;
+  padding: 5px 10px;
+  border-color: transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--accent-strong);
+}
+
+.room-settings-add:hover,
+.room-settings-add:focus-visible {
+  border-color: rgba(111, 191, 143, 0.28);
+  background: rgba(111, 191, 143, 0.045);
+}
+
+.playlist-toolbar {
+  display: flex;
+  justify-content: stretch;
+}
+
+.playlist-import-row {
+  justify-self: stretch;
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  text-align: left;
+}
+
+#playlistImportStatus:empty {
+  display: none;
+}
+
+#newPlaylist {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  border-radius: 10px;
+  font-size: 0.92rem;
+}
+
+.playlist-create-panel {
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.library-rail form.playlist-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 84px;
+  gap: 8px;
+  align-items: center;
+}
+
+#playlistName {
+  grid-column: 1;
+  grid-row: 1;
+  min-height: 38px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.playlist-create button {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 84px;
+  min-height: 38px;
+  padding-inline: 12px;
+}
+
+#playlistSelect {
+  min-height: 40px;
+  padding: 8px 34px 8px 13px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 0.92rem;
+}
+
+.playlist-control-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 0;
+}
+
+.playlist-control-row button {
+  min-width: 72px;
+  min-height: 38px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.playlist-control-row button:hover,
+.playlist-control-row button:focus-visible {
+  border-color: rgba(255, 255, 255, 0.085);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.playlist-control-row button.icon-only {
+  width: 38px;
+  min-width: 38px;
+  padding: 0;
+}
+
+.playlist-add-menu {
+  position: relative;
+  min-width: 0;
+}
+
+.playlist-add-options {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 180px;
+  max-width: min(260px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.36);
+}
+
+.playlist-add-option {
+  display: block;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.playlist-add-option:hover {
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--accent-strong);
+}
+
+.playlist-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.playlist-items {
+  display: grid;
+  gap: 8px;
+}
+
+#playlistDetail {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 3px;
+  scrollbar-gutter: stable;
+}
+
+.playlist-items .item {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+#playlistDetail > .hint {
+  margin-top: 18px;
+}
+
+.admin-page .section-head {
+  align-items: flex-start;
+}
+
+.admin-page #configStatus {
+  max-width: min(520px, 60%);
+  text-align: right;
+}
+
+.playback-lists {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+  padding: 16px;
+}
+
+.playback-lists .history-panel,
+.playback-lists .queue-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin-bottom: 0;
+}
+
+.playback-lists .section-head {
+  margin-bottom: 14px;
+}
+
+.playback-lists .section-head .secondary {
+  min-width: 0;
+  color: var(--muted);
+}
+
+.playback-lists .section-head .secondary:hover,
+.playback-lists .section-head .secondary:focus-visible {
+  color: var(--text);
+}
+
+.queue-panel h2,
+.history-panel h2 {
+  margin-bottom: 0;
+  font-size: 1.2rem;
+}
+
+#queue {
+  overflow: auto;
+  margin: 0;
+  padding-left: 0;
+  color: var(--muted);
+  list-style: none;
+}
+
+#history {
+  overflow: auto;
+}
+
+.queue-item {
+  list-style: none;
+}
+
+.queue-item.queue-item-draggable {
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+}
+
+.queue-item .meta {
+  min-width: 0;
+}
+
+.queue-drag-handle {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  min-width: 32px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: grab;
+  opacity: 0.58;
+  touch-action: none;
+  transition:
+    opacity 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    background-color 120ms ease;
+}
+
+.queue-drag-handle:hover,
+.queue-drag-handle:focus-visible {
+  border-color: rgba(255, 255, 255, 0.085);
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text);
+  opacity: 1;
+}
+
+.queue-drag-handle:active {
+  cursor: grabbing;
+}
+
+.item:hover .queue-drag-handle,
+.item:focus-within .queue-drag-handle {
+  opacity: 0.9;
+}
+
+.queue-drag-icon {
+  display: block;
+  width: 16px;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  box-shadow:
+    0 5px currentColor,
+    0 10px currentColor;
+  transform: translateY(-5px);
+}
+
+.queue-sortable-ghost {
+  opacity: 0.3;
+}
+
+.queue-sortable-chosen {
+  border-color: var(--accent);
+  background: rgba(47, 158, 117, 0.08);
+}
+
+.queue-sortable-drag {
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  background: var(--panel-2);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+}
+
+.queue-reorder-error {
+  animation: queue-reorder-error 180ms ease-in-out 2;
+}
+
+@keyframes queue-reorder-error {
+  50% {
+    transform: translateX(3px);
+  }
+}
