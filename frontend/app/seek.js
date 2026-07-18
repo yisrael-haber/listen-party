@@ -4,7 +4,6 @@ import permissions from "./permissions.js";
 import formatting from "./formatting.js";
 import apiModule from "./api.js";
 
-
 let seekInput, elapsedEl, durationEl;
 
 function init() {
@@ -25,7 +24,7 @@ function init() {
     }
     const positionMS = Math.max(0, Math.round(Number(seekInput.value) * 1000));
     setSeeking(false);
-    await apiModule.command({action: "seek", position_ms: positionMS});
+    await apiModule.command({ action: "seek", position_ms: positionMS });
   });
 }
 
@@ -34,11 +33,14 @@ function setSeekUI(position) {
   const max = duration > 0 ? duration : Math.max(position, 0);
   const value = Math.min(position, max);
   seekInput.max = String(Math.ceil(max));
-  seekInput.disabled = !audio.hasMedia() || !permissions.hasRoomPermission("playback_control");
+  seekInput.disabled =
+    !audio.hasMedia() || !permissions.hasRoomPermission("playback_control");
   if (!seeking) {
     seekInput.value = String(value);
   }
-  elapsedEl.textContent = formatting.formatTime(seeking ? Number(seekInput.value) : value);
+  elapsedEl.textContent = formatting.formatTime(
+    seeking ? Number(seekInput.value) : value,
+  );
   durationEl.textContent = formatting.formatTime(duration);
 }
 

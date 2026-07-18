@@ -7,7 +7,11 @@
 .app-shell.listening-first .playback-area {
   grid-template-rows: minmax(198px, 25vh) minmax(0, 1fr);
   background:
-    radial-gradient(circle at 72% 0%, rgba(111, 191, 143, 0.09), transparent 32%),
+    radial-gradient(
+      circle at 72% 0%,
+      rgba(111, 191, 143, 0.09),
+      transparent 32%
+    ),
     var(--bg);
 }
 
@@ -237,4 +241,3 @@
   --accent: #6fbf8f;
   --accent-strong: #83d3a3;
 }
-

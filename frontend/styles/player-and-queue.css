@@ -326,7 +326,8 @@
   color: var(--text);
 }
 
-.queue-panel h2, .history-panel h2 {
+.queue-panel h2,
+.history-panel h2 {
   margin-bottom: 0;
   font-size: 1.2rem;
 }
@@ -370,7 +371,11 @@
   cursor: grab;
   opacity: 0.58;
   touch-action: none;
-  transition: opacity 120ms ease, border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+  transition:
+    opacity 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    background-color 120ms ease;
 }
 
 .queue-drag-handle:hover,
@@ -396,7 +401,9 @@
   height: 2px;
   border-radius: 2px;
   background: currentColor;
-  box-shadow: 0 5px currentColor, 0 10px currentColor;
+  box-shadow:
+    0 5px currentColor,
+    0 10px currentColor;
   transform: translateY(-5px);
 }
 
@@ -421,6 +428,7 @@
 }
 
 @keyframes queue-reorder-error {
-  50% { transform: translateX(3px); }
+  50% {
+    transform: translateX(3px);
+  }
 }
-

@@ -120,7 +120,8 @@
     max-width: 92px;
   }
 
-  .seek-control, .volume-control {
+  .seek-control,
+  .volume-control {
     grid-column: 1 / -1;
   }
 

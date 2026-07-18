@@ -1,4 +1,21 @@
-import { currentRoomID, currentPermissions, canAdministerCurrentRoom, lastState, setLastState, setLastStateReceivedAt, queueDragActive, setQueueDragActive, queueReorderPending, setQueueReorderPending, pendingQueueState, setPendingQueueState, setCurrentRoomID, setCurrentPermissions, setCanAdministerCurrentRoom, roomAPI } from "./state.js";
+import {
+  currentRoomID,
+  currentPermissions,
+  canAdministerCurrentRoom,
+  lastState,
+  setLastState,
+  setLastStateReceivedAt,
+  queueDragActive,
+  setQueueDragActive,
+  queueReorderPending,
+  setQueueReorderPending,
+  pendingQueueState,
+  setPendingQueueState,
+  setCurrentRoomID,
+  setCurrentPermissions,
+  setCanAdministerCurrentRoom,
+  roomAPI,
+} from "./state.js";
 import apiModule from "./api.js";
 import audioModule from "./audio.js";
 import roomSettingsModule from "./room-settings.js";
@@ -21,7 +38,9 @@ function init() {
   });
 
   window.addEventListener("popstate", () => {
-    const roomID = decodeURIComponent(location.pathname.match(/^\/rooms\/([^/]+)/)?.[1] || "");
+    const roomID = decodeURIComponent(
+      location.pathname.match(/^\/rooms\/([^/]+)/)?.[1] || "",
+    );
     if (roomID) switchRoom(roomID, false).catch(console.error);
   });
 
@@ -34,30 +53,37 @@ function init() {
 
 async function loadRooms(info = null) {
   info ||= await apiModule.api("/api/session");
-  currentUserEl.textContent = info.user?.display_name || info.user?.username || "Signed in";
+  currentUserEl.textContent =
+    info.user?.display_name || info.user?.username || "Signed in";
   const rooms = info.rooms || [];
   if (!currentRoomID) {
-    setCurrentRoomID(info.default_room_id || (rooms[0] && rooms[0].id) || "main");
+    setCurrentRoomID(
+      info.default_room_id || (rooms[0] && rooms[0].id) || "main",
+    );
   }
   if (rooms.length > 0 && !rooms.some((room) => room.id === currentRoomID)) {
     setCurrentRoomID(rooms[0].id);
   }
-  roomSelect.replaceChildren(...rooms.map((room) => {
-    const option = document.createElement("option");
-    option.value = room.id;
-    option.textContent = room.name || room.id;
-    return option;
-  }));
+  roomSelect.replaceChildren(
+    ...rooms.map((room) => {
+      const option = document.createElement("option");
+      option.value = room.id;
+      option.textContent = room.name || room.id;
+      return option;
+    }),
+  );
   roomSelect.value = currentRoomID;
   roomSelect.disabled = rooms.length <= 1;
   setCurrentPermissions(new Set(info.permissions?.[currentRoomID] || []));
-	if (info.disconnected?.[currentRoomID]) {
-		audioModule.forceLogout();
-		return false;
-	}
-	setCanAdministerCurrentRoom(Boolean(info.room_administration?.[currentRoomID]));
-	roomSettingsButton.hidden = !canAdministerCurrentRoom;
-	if (!canAdministerCurrentRoom) roomSettingsModule.closeRoomSettings();
+  if (info.disconnected?.[currentRoomID]) {
+    audioModule.forceLogout();
+    return false;
+  }
+  setCanAdministerCurrentRoom(
+    Boolean(info.room_administration?.[currentRoomID]),
+  );
+  roomSettingsButton.hidden = !canAdministerCurrentRoom;
+  if (!canAdministerCurrentRoom) roomSettingsModule.closeRoomSettings();
   return true;
 }
 
@@ -84,16 +110,21 @@ async function switchRoom(roomID, updateHistory = true) {
     setQueueReorderPending(false);
     setPendingQueueState(null);
     setCanAdministerCurrentRoom(false);
-    if (updateHistory) history.pushState(null, "", `/rooms/${encodeURIComponent(roomID)}`);
+    if (updateHistory)
+      history.pushState(null, "", `/rooms/${encodeURIComponent(roomID)}`);
 
-    if (!await loadRooms(info)) return;
+    if (!(await loadRooms(info))) return;
     volumeModule.restoreVolumePreferences();
     renderStateModule.renderState(state);
     audioModule.connectEvents();
   } catch (err) {
     console.error(err);
     roomSelect.value = currentRoomID;
-    history.replaceState(null, "", `/rooms/${encodeURIComponent(currentRoomID)}`);
+    history.replaceState(
+      null,
+      "",
+      `/rooms/${encodeURIComponent(currentRoomID)}`,
+    );
   } finally {
     roomSelect.disabled = roomSelect.options.length <= 1;
     queueModule.updateQueueSortable();

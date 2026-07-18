@@ -4,9 +4,16 @@ import trackUi from "./track-ui.js";
 const historyEl = document.getElementById("history");
 
 function renderHistoryItem(item) {
-	const track = item.track;
-	const dedupeKey = item.dedupe_key;
-	return trackUi.trackRow(track || {title: "Unavailable track", dedupe_key: dedupeKey}, trackUi.standardTrackCommands(dedupeKey), formatting.playbackRequester(item), dedupeKey, [], true);
+  const track = item.track;
+  const dedupeKey = item.dedupe_key;
+  return trackUi.trackRow(
+    track || { title: "Unavailable track", dedupe_key: dedupeKey },
+    trackUi.standardTrackCommands(dedupeKey),
+    formatting.playbackRequester(item),
+    dedupeKey,
+    [],
+    true,
+  );
 }
 
 function renderHistory(history) {

@@ -29,26 +29,64 @@ export let roomSaveFeedbackTimer = 0;
 export let volumeMode = "local";
 export let localVolume = 0;
 export let localMuted = false;
-export let currentRoomID = decodeURIComponent(location.pathname.match(/^\/rooms\/([^/]+)/)?.[1] || "");
+export let currentRoomID = decodeURIComponent(
+  location.pathname.match(/^\/rooms\/([^/]+)/)?.[1] || "",
+);
 
-export function setLastState(value) { lastState = value; }
-export function setLastStateReceivedAt(value) { lastStateReceivedAt = value; }
-export function setSearchTimer(value) { searchTimer = value; }
-export function setSeeking(value) { seeking = value; }
-export function setEvents(value) { events = value; }
-export function setPlaylists(value) { playlists = value; }
-export function setSelectedPlaylistID(value) { selectedPlaylistID = value; }
-export function setCurrentPermissions(value) { currentPermissions = value; }
-export function setQueueSortable(value) { queueSortable = value; }
-export function setQueueDragActive(value) { queueDragActive = value; }
-export function setQueueReorderPending(value) { queueReorderPending = value; }
-export function setPendingQueueState(value) { pendingQueueState = value; }
-export function setCanAdministerCurrentRoom(value) { canAdministerCurrentRoom = value; }
-export function setRoomSaveFeedbackTimer(value) { roomSaveFeedbackTimer = value; }
-export function setVolumeMode(value) { volumeMode = value; }
-export function setLocalVolume(value) { localVolume = value; }
-export function setLocalMuted(value) { localMuted = value; }
-export function setCurrentRoomID(value) { currentRoomID = value; }
+export function setLastState(value) {
+  lastState = value;
+}
+export function setLastStateReceivedAt(value) {
+  lastStateReceivedAt = value;
+}
+export function setSearchTimer(value) {
+  searchTimer = value;
+}
+export function setSeeking(value) {
+  seeking = value;
+}
+export function setEvents(value) {
+  events = value;
+}
+export function setPlaylists(value) {
+  playlists = value;
+}
+export function setSelectedPlaylistID(value) {
+  selectedPlaylistID = value;
+}
+export function setCurrentPermissions(value) {
+  currentPermissions = value;
+}
+export function setQueueSortable(value) {
+  queueSortable = value;
+}
+export function setQueueDragActive(value) {
+  queueDragActive = value;
+}
+export function setQueueReorderPending(value) {
+  queueReorderPending = value;
+}
+export function setPendingQueueState(value) {
+  pendingQueueState = value;
+}
+export function setCanAdministerCurrentRoom(value) {
+  canAdministerCurrentRoom = value;
+}
+export function setRoomSaveFeedbackTimer(value) {
+  roomSaveFeedbackTimer = value;
+}
+export function setVolumeMode(value) {
+  volumeMode = value;
+}
+export function setLocalVolume(value) {
+  localVolume = value;
+}
+export function setLocalMuted(value) {
+  localMuted = value;
+}
+export function setCurrentRoomID(value) {
+  currentRoomID = value;
+}
 
 export function storageGet(key) {
   try {

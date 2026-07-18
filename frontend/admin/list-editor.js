@@ -12,7 +12,8 @@ export function renderListItem(value, inputClass, placeholder, ariaLabel) {
   input.setAttribute("aria-label", ariaLabel);
 
   const remove = document.createElement("button");
-  remove.className = "secondary compact icon-only trash-button list-editor-remove";
+  remove.className =
+    "secondary compact icon-only trash-button list-editor-remove";
   remove.type = "button";
   remove.title = "Remove";
   remove.setAttribute("aria-label", "Remove");
@@ -51,7 +52,11 @@ export function listEditor(title, inputClass, values, placeholder) {
   const list = document.createElement("div");
   list.className = "list-editor-items";
   const rows = values.length > 0 ? values : [""];
-  list.replaceChildren(...rows.map((value) => renderListItem(value, inputClass, placeholder, title)));
+  list.replaceChildren(
+    ...rows.map((value) =>
+      renderListItem(value, inputClass, placeholder, title),
+    ),
+  );
 
   add.addEventListener("click", () => {
     const row = renderListItem("", inputClass, placeholder, title);

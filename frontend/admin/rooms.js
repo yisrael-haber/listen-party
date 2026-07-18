@@ -1,8 +1,4 @@
-import {
-  roomsList,
-  roomCounter,
-  setRoomCounter,
-} from "./state.js";
+import { roomsList, roomCounter, setRoomCounter } from "./state.js";
 import {
   renderListItem,
   updateListRemoveButtons,
@@ -41,7 +37,14 @@ export function renderRoomRow(room = {}) {
   });
 
   main.append(id, name);
-  access.append(listEditor("Room administrator groups", "room-admin-group", room.admin_groups || [], "Group"));
+  access.append(
+    listEditor(
+      "Room administrator groups",
+      "room-admin-group",
+      room.admin_groups || [],
+      "Group",
+    ),
+  );
   fields.append(main, access);
   row.append(fields, remove);
   return row;
@@ -51,7 +54,9 @@ export function readRooms() {
   return [...roomsList.querySelectorAll(".room-row")].map((row) => ({
     id: row.querySelector(".room-id").value.trim(),
     name: row.querySelector(".room-name").value.trim(),
-    admin_groups: [...row.querySelectorAll(".room-admin-group")].map((input) => input.value.trim()).filter(Boolean),
+    admin_groups: [...row.querySelectorAll(".room-admin-group")]
+      .map((input) => input.value.trim())
+      .filter(Boolean),
     grants: cloneGrants(row.roomGrants),
   }));
 }
@@ -64,7 +69,12 @@ export function updateRoomRemoveButtons() {
 }
 
 export function cloneGrants(grants) {
-  return Object.fromEntries(Object.entries(grants || {}).map(([group, permissions]) => [group, [...permissions]]));
+  return Object.fromEntries(
+    Object.entries(grants || {}).map(([group, permissions]) => [
+      group,
+      [...permissions],
+    ]),
+  );
 }
 
 export function inputField(labelText, className, value) {

@@ -27,10 +27,12 @@ export function setStatus(message, kind = "") {
 
 export function resetSaveButtonAfterDelay() {
   clearTimeout(saveFeedbackTimer);
-  setSaveFeedbackTimer(setTimeout(() => {
-    configSaveButton.textContent = "Save";
-    configSaveButton.dataset.state = "";
-  }, 1400));
+  setSaveFeedbackTimer(
+    setTimeout(() => {
+      configSaveButton.textContent = "Save";
+      configSaveButton.dataset.state = "";
+    }, 1400),
+  );
 }
 
 export function renderConfig(cfg) {
@@ -46,11 +48,15 @@ export function renderConfig(cfg) {
   configKeycloakClientID.value = keycloak.client_id || "";
   configKeycloakClientSecret.value = keycloak.client_secret || "";
   configKeycloakDisplayName.value = keycloak.display_name || "Keycloak";
-  renderRooms(cfg.rooms || [{
-    id: "main",
-    name: "Public Room",
-    grants: {everyone: ["queue_add", "queue_manage", "playback_control"]},
-  }]);
+  renderRooms(
+    cfg.rooms || [
+      {
+        id: "main",
+        name: "Public Room",
+        grants: { everyone: ["queue_add", "queue_manage", "playback_control"] },
+      },
+    ],
+  );
 }
 
 export function readConfigForm() {
@@ -59,7 +65,10 @@ export function readConfigForm() {
     addr: configAddr.value.trim(),
     music_dirs: readMusicDirs(),
     banned_ips: readBannedIPs(),
-    scan_workers: Math.max(1, Math.min(256, Math.floor(Number(configScanWorkers.value) || 16))),
+    scan_workers: Math.max(
+      1,
+      Math.min(256, Math.floor(Number(configScanWorkers.value) || 16)),
+    ),
     rooms: readRooms(),
     auth: {
       pocketbase: {
@@ -99,8 +108,14 @@ export function init() {
       const saveRequest = api("/api/admin/config", {
         method: "PUT",
         body: JSON.stringify(readConfigForm()),
-      }).then((value) => ({value}), (error) => ({error}));
-      const [result] = await Promise.all([saveRequest, delay(minimumSaveFeedbackMS)]);
+      }).then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      );
+      const [result] = await Promise.all([
+        saveRequest,
+        delay(minimumSaveFeedbackMS),
+      ]);
       if (result.error) throw result.error;
       renderConfig(result.value);
       setStatus("Saved", "ok");

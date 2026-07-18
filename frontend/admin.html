@@ -1,99 +1,132 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Listen Party Admin</title>
-  <link rel="stylesheet" href="/assets/style.css">
-</head>
-<body class="admin-page">
-  <main>
-    <header class="brand">
-      <h1>Admin</h1>
-      <p>Listen Party configuration</p>
-    </header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Listen Party Admin</title>
+    <link rel="stylesheet" href="/assets/style.css" />
+  </head>
+  <body class="admin-page">
+    <main>
+      <header class="brand">
+        <h1>Admin</h1>
+        <p>Listen Party configuration</p>
+      </header>
 
-    <section class="config-panel">
-      <div class="section-head">
-        <h2>Config</h2>
-        <span id="configStatus" class="status" role="status" aria-live="polite"></span>
-      </div>
-      <form id="configForm">
-        <section class="config-section">
-          <h3>Server</h3>
-          <div class="config-grid">
-            <label>
-              <span>Listen address</span>
-              <input id="configAddr" name="addr" autocomplete="off">
-            </label>
-            <label>
-              <span>Scan workers</span>
-              <input id="configScanWorkers" name="scan_workers" type="number" min="1" max="256" step="1">
-            </label>
-          </div>
-          <div class="list-editor">
-            <div class="list-editor-head">
-              <span>Banned IP addresses</span>
-              <button id="addBannedIP" class="secondary compact" type="button">Add IP</button>
-            </div>
-            <div id="configBannedIPs" class="list-editor-items"></div>
-          </div>
-        </section>
-
-        <section class="config-section">
-          <div class="config-section-head">
-            <h3>Library</h3>
-            <button id="rescan" class="secondary compact" type="button">Rescan</button>
-          </div>
-          <div class="library-status">
-            <span id="scanStatus" class="status"></span>
-            <span id="rescanStatus" class="status" role="status" aria-live="polite"></span>
-          </div>
-          <div class="list-editor">
-            <div id="configMusicDirs" class="list-editor-items"></div>
-            <button id="addMusicDir" class="secondary compact" type="button">Add Path</button>
-          </div>
-        </section>
-
-        <section class="config-section">
-          <h3>Keycloak</h3>
-          <label class="checkbox-label">
-            <input id="configKeycloakEnabled" type="checkbox">
-            <span>Enable Keycloak</span>
-          </label>
-          <div class="config-grid">
-            <label>
-              <span>Keycloak issuer URL</span>
-              <input id="configKeycloakIssuer" autocomplete="off">
-            </label>
-            <label>
-              <span>Keycloak client ID</span>
-              <input id="configKeycloakClientID" autocomplete="off">
-            </label>
-            <label>
-              <span>Keycloak client secret</span>
-              <input id="configKeycloakClientSecret" type="password" autocomplete="off">
-            </label>
-            <label>
-              <span>Keycloak display name</span>
-              <input id="configKeycloakDisplayName" autocomplete="off">
-            </label>
-          </div>
-        </section>
-
-        <section class="rooms-editor">
-          <div class="section-head">
-            <h2>Rooms</h2>
-            <button id="addRoom" class="secondary compact" type="button">Add Room</button>
-          </div>
-          <div id="roomsList" class="rooms-list"></div>
-        </section>
-        <div class="form-actions">
-          <button id="configSave" type="submit">Save</button>
+      <section class="config-panel">
+        <div class="section-head">
+          <h2>Config</h2>
+          <span
+            id="configStatus"
+            class="status"
+            role="status"
+            aria-live="polite"
+          ></span>
         </div>
-      </form>
-    </section>
-  </main>
-  <script type="module" src="/admin.js"></script>
-</body>
+        <form id="configForm">
+          <section class="config-section">
+            <h3>Server</h3>
+            <div class="config-grid">
+              <label>
+                <span>Listen address</span>
+                <input id="configAddr" name="addr" autocomplete="off" />
+              </label>
+              <label>
+                <span>Scan workers</span>
+                <input
+                  id="configScanWorkers"
+                  name="scan_workers"
+                  type="number"
+                  min="1"
+                  max="256"
+                  step="1"
+                />
+              </label>
+            </div>
+            <div class="list-editor">
+              <div class="list-editor-head">
+                <span>Banned IP addresses</span>
+                <button
+                  id="addBannedIP"
+                  class="secondary compact"
+                  type="button"
+                >
+                  Add IP
+                </button>
+              </div>
+              <div id="configBannedIPs" class="list-editor-items"></div>
+            </div>
+          </section>
+
+          <section class="config-section">
+            <div class="config-section-head">
+              <h3>Library</h3>
+              <button id="rescan" class="secondary compact" type="button">
+                Rescan
+              </button>
+            </div>
+            <div class="library-status">
+              <span id="scanStatus" class="status"></span>
+              <span
+                id="rescanStatus"
+                class="status"
+                role="status"
+                aria-live="polite"
+              ></span>
+            </div>
+            <div class="list-editor">
+              <div id="configMusicDirs" class="list-editor-items"></div>
+              <button id="addMusicDir" class="secondary compact" type="button">
+                Add Path
+              </button>
+            </div>
+          </section>
+
+          <section class="config-section">
+            <h3>Keycloak</h3>
+            <label class="checkbox-label">
+              <input id="configKeycloakEnabled" type="checkbox" />
+              <span>Enable Keycloak</span>
+            </label>
+            <div class="config-grid">
+              <label>
+                <span>Keycloak issuer URL</span>
+                <input id="configKeycloakIssuer" autocomplete="off" />
+              </label>
+              <label>
+                <span>Keycloak client ID</span>
+                <input id="configKeycloakClientID" autocomplete="off" />
+              </label>
+              <label>
+                <span>Keycloak client secret</span>
+                <input
+                  id="configKeycloakClientSecret"
+                  type="password"
+                  autocomplete="off"
+                />
+              </label>
+              <label>
+                <span>Keycloak display name</span>
+                <input id="configKeycloakDisplayName" autocomplete="off" />
+              </label>
+            </div>
+          </section>
+
+          <section class="rooms-editor">
+            <div class="section-head">
+              <h2>Rooms</h2>
+              <button id="addRoom" class="secondary compact" type="button">
+                Add Room
+              </button>
+            </div>
+            <div id="roomsList" class="rooms-list"></div>
+          </section>
+          <div class="form-actions">
+            <button id="configSave" type="submit">Save</button>
+          </div>
+        </form>
+      </section>
+    </main>
+    <script type="module" src="/admin.js"></script>
+  </body>
 </html>

@@ -5,11 +5,21 @@ export const configAddr = document.getElementById("configAddr");
 export const configMusicDirs = document.getElementById("configMusicDirs");
 export const configBannedIPs = document.getElementById("configBannedIPs");
 export const configScanWorkers = document.getElementById("configScanWorkers");
-export const configKeycloakEnabled = document.getElementById("configKeycloakEnabled");
-export const configKeycloakIssuer = document.getElementById("configKeycloakIssuer");
-export const configKeycloakClientID = document.getElementById("configKeycloakClientID");
-export const configKeycloakClientSecret = document.getElementById("configKeycloakClientSecret");
-export const configKeycloakDisplayName = document.getElementById("configKeycloakDisplayName");
+export const configKeycloakEnabled = document.getElementById(
+  "configKeycloakEnabled",
+);
+export const configKeycloakIssuer = document.getElementById(
+  "configKeycloakIssuer",
+);
+export const configKeycloakClientID = document.getElementById(
+  "configKeycloakClientID",
+);
+export const configKeycloakClientSecret = document.getElementById(
+  "configKeycloakClientSecret",
+);
+export const configKeycloakDisplayName = document.getElementById(
+  "configKeycloakDisplayName",
+);
 export const addMusicDirButton = document.getElementById("addMusicDir");
 export const addBannedIPButton = document.getElementById("addBannedIP");
 export const addRoomButton = document.getElementById("addRoom");

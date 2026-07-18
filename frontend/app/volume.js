@@ -1,7 +1,20 @@
-import { volumeMode, localVolume, localMuted, lastState, currentRoomID, localVolumeStorageKey, localMutedStorageKey, defaultVolume, storageGet, storageSet, setVolumeMode, setLocalVolume, setLocalMuted } from "./state.js";
+import {
+  volumeMode,
+  localVolume,
+  localMuted,
+  lastState,
+  currentRoomID,
+  localVolumeStorageKey,
+  localMutedStorageKey,
+  defaultVolume,
+  storageGet,
+  storageSet,
+  setVolumeMode,
+  setLocalVolume,
+  setLocalMuted,
+} from "./state.js";
 import permissions from "./permissions.js";
 import apiModule from "./api.js";
-
 
 let muteButton, volumeInput, volumeModeButton;
 
@@ -25,9 +38,17 @@ function init() {
   });
 
   volumeInput.addEventListener("change", async () => {
-    if (volumeMode !== "room" || !permissions.hasRoomPermission("volume_control")) return;
+    if (
+      volumeMode !== "room" ||
+      !permissions.hasRoomPermission("volume_control")
+    )
+      return;
     try {
-      await apiModule.command({action: "room_audio", volume: Number(volumeInput.value), muted: false});
+      await apiModule.command({
+        action: "room_audio",
+        volume: Number(volumeInput.value),
+        muted: false,
+      });
     } catch (err) {
       console.error(err);
       renderVolumeControl();
@@ -43,10 +64,14 @@ function init() {
   muteButton.addEventListener("click", async () => {
     if (volumeMode === "room") {
       if (!permissions.hasRoomPermission("volume_control")) return;
-      const roomAudio = lastState?.room_audio || {volume: defaultVolume, muted: false};
+      const roomAudio = lastState?.room_audio || {
+        volume: defaultVolume,
+        muted: false,
+      };
       const muted = !roomAudio.muted && roomAudio.volume > 0;
-      const volume = !muted && roomAudio.volume === 0 ? defaultVolume : roomAudio.volume;
-      await apiModule.command({action: "room_audio", volume, muted});
+      const volume =
+        !muted && roomAudio.volume === 0 ? defaultVolume : roomAudio.volume;
+      await apiModule.command({ action: "room_audio", volume, muted });
       return;
     }
     if (localMuted || localVolume === 0) {
@@ -86,22 +111,41 @@ function volumeModeStorageKey() {
 function restoreVolumePreferences() {
   if (!audioEl) audioEl = document.getElementById("audio");
   const storedVolume = Number(storageGet(localVolumeStorageKey));
-  setLocalVolume(Number.isFinite(storedVolume) ? Math.max(0, Math.min(Number(volumeInput.max), storedVolume)) : 0);
+  setLocalVolume(
+    Number.isFinite(storedVolume)
+      ? Math.max(0, Math.min(Number(volumeInput.max), storedVolume))
+      : 0,
+  );
   setLocalMuted(storageGet(localMutedStorageKey) === "true");
-  setVolumeMode(storageGet(volumeModeStorageKey()) === "room" ? "room" : "local");
+  setVolumeMode(
+    storageGet(volumeModeStorageKey()) === "room" ? "room" : "local",
+  );
   renderVolumeControl();
 }
 
 function renderVolumeControl() {
   const roomMode = volumeMode === "room";
-  const roomAudio = lastState?.room_audio || {volume: defaultVolume, muted: false};
+  const roomAudio = lastState?.room_audio || {
+    volume: defaultVolume,
+    muted: false,
+  };
   const canControlRoomVolume = permissions.hasRoomPermission("volume_control");
   volumeModeButton.textContent = roomMode ? "Room" : "Local";
   volumeModeButton.setAttribute("aria-pressed", String(roomMode));
   volumeModeButton.title = roomMode ? "Use local volume" : "Use room volume";
   volumeInput.disabled = roomMode && !canControlRoomVolume;
   muteButton.disabled = roomMode && !canControlRoomVolume;
-  applyAudioSettings(roomMode ? roomAudio.volume : localVolume, roomMode ? roomAudio.muted : localMuted);
+  applyAudioSettings(
+    roomMode ? roomAudio.volume : localVolume,
+    roomMode ? roomAudio.muted : localMuted,
+  );
 }
 
-export default { init, renderVolumeButton, applyAudioSettings, volumeModeStorageKey, restoreVolumePreferences, renderVolumeControl };
+export default {
+  init,
+  renderVolumeButton,
+  applyAudioSettings,
+  volumeModeStorageKey,
+  restoreVolumePreferences,
+  renderVolumeControl,
+};

@@ -34,7 +34,10 @@ export function renderScanStatus(scan) {
   }
   if (scan.scanning) {
     const roots = scan.roots || [];
-    const scope = roots.length === 1 ? `Scanning ${shortPath(roots[0])}` : `Scanning ${roots.length || 0} folders`;
+    const scope =
+      roots.length === 1
+        ? `Scanning ${shortPath(roots[0])}`
+        : `Scanning ${roots.length || 0} folders`;
     scanStatus.textContent = `${scope}: ${scan.mp3_seen || 0} seen, ${scan.indexed || 0} indexed, ${scan.unchanged || 0} unchanged, ${formatRate(scan.recent_tracks_per_sec)} recent`;
     scanStatus.dataset.kind = "working";
     return true;
@@ -50,9 +53,11 @@ export async function loadLibraryStatus() {
   try {
     const info = await api("/api/library");
     if (renderScanStatus(info.scan)) {
-      setScanStatusTimer(setTimeout(() => {
-        loadLibraryStatus().catch(console.error);
-      }, 2000));
+      setScanStatusTimer(
+        setTimeout(() => {
+          loadLibraryStatus().catch(console.error);
+        }, 2000),
+      );
     }
   } catch (err) {
     scanStatus.textContent = "Scan status unavailable";
@@ -71,8 +76,8 @@ export async function rescanMusicDir(path, button) {
   try {
     const res = await fetch("/api/admin/rescan-dir", {
       method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({music_dir: path}),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ music_dir: path }),
     });
     if (res.status === 409) {
       setRescanStatus("Scan already in progress", "working");
@@ -95,7 +100,7 @@ export function init() {
     rescanButton.disabled = true;
     setRescanStatus("Rescanning...", "working");
     try {
-      const res = await fetch("/api/admin/rescan", {method: "POST"});
+      const res = await fetch("/api/admin/rescan", { method: "POST" });
       if (res.status === 409) {
         setRescanStatus("Scan already in progress", "working");
         await loadLibraryStatus();

@@ -1,4 +1,14 @@
-import { lastState, lastStateReceivedAt, seeking, recoveryStorageKey, recoveryCooldownMS, syncToleranceSeconds, events, currentRoomID, setEvents } from "./state.js";
+import {
+  lastState,
+  lastStateReceivedAt,
+  seeking,
+  recoveryStorageKey,
+  recoveryCooldownMS,
+  syncToleranceSeconds,
+  events,
+  currentRoomID,
+  setEvents,
+} from "./state.js";
 import seek from "./seek.js";
 import permissions from "./permissions.js";
 import volume from "./volume.js";
@@ -36,19 +46,19 @@ function init() {
   audioEl.addEventListener("volumechange", volume.renderVolumeButton);
 
   previousButton.addEventListener("click", async () => {
-    await apiModule.command({action: "previous"});
+    await apiModule.command({ action: "previous" });
   });
 
   skipButton.addEventListener("click", async () => {
-    await apiModule.command({action: "skip"});
+    await apiModule.command({ action: "skip" });
   });
 
   togglePlaybackButton.addEventListener("click", async () => {
     if (lastState && lastState.current && !lastState.paused) {
-      await apiModule.command({action: "pause"});
+      await apiModule.command({ action: "pause" });
       return;
     }
-    await apiModule.command({action: "play"});
+    await apiModule.command({ action: "play" });
   });
 }
 
@@ -89,11 +99,14 @@ function loadArtwork(track) {
 }
 
 function samePlaybackTimeline(a, b) {
-  return Boolean(a && b
-    && a.current?.dedupe_key === b.current?.dedupe_key
-    && a.started_at === b.started_at
-    && a.paused === b.paused
-    && a.position_at_pause_ms === b.position_at_pause_ms);
+  return Boolean(
+    a &&
+    b &&
+    a.current?.dedupe_key === b.current?.dedupe_key &&
+    a.started_at === b.started_at &&
+    a.paused === b.paused &&
+    a.position_at_pause_ms === b.position_at_pause_ms,
+  );
 }
 
 function mediaDuration() {
@@ -160,7 +173,11 @@ function syncAudio(state, correctTime = true) {
 
   if (correctTime) setSyncedTime(target);
   if (audioEl.paused) playAudio();
-  seek.setSeekUI(audioEl.readyState >= HTMLMediaElement.HAVE_METADATA ? audioEl.currentTime : target);
+  seek.setSeekUI(
+    audioEl.readyState >= HTMLMediaElement.HAVE_METADATA
+      ? audioEl.currentTime
+      : target,
+  );
 }
 
 function syncCurrentAudio() {
@@ -183,7 +200,8 @@ function recoverPlaybackClient(reason, error = null) {
   } catch {
     // Without storage, do not risk a refresh loop.
   }
-  document.getElementById("libraryStatus").textContent = "Playback synchronization failed. Refresh this page.";
+  document.getElementById("libraryStatus").textContent =
+    "Playback synchronization failed. Refresh this page.";
 }
 
 function closeEvents() {
@@ -215,14 +233,15 @@ function connectEvents() {
     if (roomID !== currentRoomID) return;
     forceLogout();
   });
-	events.addEventListener("error", async () => {
-		try {
-			const info = await apiModule.api("/api/session");
-			if (roomID === currentRoomID && info.disconnected?.[roomID]) forceLogout();
-		} catch {
-			// A network outage is not an administrative disconnect.
-		}
-	});
+  events.addEventListener("error", async () => {
+    try {
+      const info = await apiModule.api("/api/session");
+      if (roomID === currentRoomID && info.disconnected?.[roomID])
+        forceLogout();
+    } catch {
+      // A network outage is not an administrative disconnect.
+    }
+  });
 }
 
 let renderState;
@@ -231,4 +250,23 @@ function setRenderState(fn) {
   renderState = fn;
 }
 
-export default { init, hasMedia, mediaURL, loadMedia, clearArtwork, loadArtwork, samePlaybackTimeline, mediaDuration, playbackPosition, setSyncedTime, playAudio, syncAudio, syncCurrentAudio, recoverPlaybackClient, closeEvents, forceLogout, connectEvents, setRenderState };
+export default {
+  init,
+  hasMedia,
+  mediaURL,
+  loadMedia,
+  clearArtwork,
+  loadArtwork,
+  samePlaybackTimeline,
+  mediaDuration,
+  playbackPosition,
+  setSyncedTime,
+  playAudio,
+  syncAudio,
+  syncCurrentAudio,
+  recoverPlaybackClient,
+  closeEvents,
+  forceLogout,
+  connectEvents,
+  setRenderState,
+};

@@ -17,16 +17,19 @@ function trackContext(track) {
 }
 
 function trackSubtitle(track) {
-  return [trackContext(track), track?.track_no ? `Track ${track.track_no}` : ""].filter(Boolean).join(" · ");
+  return [trackContext(track), track?.track_no ? `Track ${track.track_no}` : ""]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function trackSubtitleWithDuration(track) {
-  const duration = track?.duration_ms > 0 ? formatTime(track.duration_ms / 1000) : "";
+  const duration =
+    track?.duration_ms > 0 ? formatTime(track.duration_ms / 1000) : "";
   return [trackSubtitle(track), duration].filter(Boolean).join(" · ");
 }
 
 function playbackRequester(item) {
-  return item?.source === "auto_dj" ? "Auto-DJ" : (item?.requested_by || "");
+  return item?.source === "auto_dj" ? "Auto-DJ" : item?.requested_by || "";
 }
 
 function emptyHint(text, tag = "p") {
@@ -39,7 +42,19 @@ function emptyHint(text, tag = "p") {
 function formatActionTime(value) {
   const time = Date.parse(value || "");
   if (!Number.isFinite(time)) return "";
-  return new Intl.DateTimeFormat(undefined, {hour: "2-digit", minute: "2-digit"}).format(new Date(time));
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(time));
 }
 
-export default { formatTime, trackTitle, trackContext, trackSubtitle, trackSubtitleWithDuration, playbackRequester, emptyHint, formatActionTime };
+export default {
+  formatTime,
+  trackTitle,
+  trackContext,
+  trackSubtitle,
+  trackSubtitleWithDuration,
+  playbackRequester,
+  emptyHint,
+  formatActionTime,
+};

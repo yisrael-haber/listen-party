@@ -1,4 +1,11 @@
-import { currentRoomID, roomAPI, storageSet, searchTextStorageKey, searchFieldStorageKey, railModeStorageKey } from "./app/state.js";
+import {
+  currentRoomID,
+  roomAPI,
+  storageSet,
+  searchTextStorageKey,
+  searchFieldStorageKey,
+  railModeStorageKey,
+} from "./app/state.js";
 import renderStateModule from "./app/render-state.js";
 import volume from "./app/volume.js";
 import seek from "./app/seek.js";
@@ -64,17 +71,20 @@ document.addEventListener("keydown", (event) => {
 });
 
 async function start() {
-  if (!await room.loadRooms()) {
+  if (!(await room.loadRooms())) {
     return;
   }
-	history.replaceState(null, "", `/rooms/${encodeURIComponent(currentRoomID)}`);
-	volume.restoreVolumePreferences();
-	queue.initQueueSortable();
-	audio.connectEvents();
-	playlists.loadLibraryStatus();
-	playlists.loadPlaylists().catch(console.error);
-	search.runSearch().catch(console.error);
-	apiModule.api(roomAPI("/api/state")).then(renderStateModule.renderState).catch(console.error);
+  history.replaceState(null, "", `/rooms/${encodeURIComponent(currentRoomID)}`);
+  volume.restoreVolumePreferences();
+  queue.initQueueSortable();
+  audio.connectEvents();
+  playlists.loadLibraryStatus();
+  playlists.loadPlaylists().catch(console.error);
+  search.runSearch().catch(console.error);
+  apiModule
+    .api(roomAPI("/api/state"))
+    .then(renderStateModule.renderState)
+    .catch(console.error);
 }
 
 start().catch(console.error);

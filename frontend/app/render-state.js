@@ -1,4 +1,14 @@
-import { lastState, setLastState, setLastStateReceivedAt, currentRoomID, setPendingQueueState, queueDragActive, queueReorderPending, pendingQueueState, setCurrentPermissions } from "./state.js";
+import {
+  lastState,
+  setLastState,
+  setLastStateReceivedAt,
+  currentRoomID,
+  setPendingQueueState,
+  queueDragActive,
+  queueReorderPending,
+  pendingQueueState,
+  setCurrentPermissions,
+} from "./state.js";
 import audioModule from "./audio.js";
 import seekModule from "./seek.js";
 import volumeModule from "./volume.js";
@@ -9,7 +19,6 @@ import historyModule from "./history.js";
 import presenceModule from "./presence.js";
 import autoDJModule from "./auto-dj.js";
 import permissions from "./permissions.js";
-
 
 const audioEl = document.getElementById("audio");
 const trackEl = document.getElementById("track");
@@ -26,7 +35,13 @@ const togglePlaybackButton = document.getElementById("togglePlayback");
 function renderState(state) {
   const revision = Number(state?.revision);
   const serverTime = Date.parse(state?.server_time);
-  if (typeof state?.generation !== "string" || !state.generation || !Number.isSafeInteger(revision) || revision < 0 || !Number.isFinite(serverTime)) {
+  if (
+    typeof state?.generation !== "string" ||
+    !state.generation ||
+    !Number.isSafeInteger(revision) ||
+    revision < 0 ||
+    !Number.isFinite(serverTime)
+  ) {
     audioModule.recoverPlaybackClient("malformed playback state");
     return;
   }
@@ -52,7 +67,10 @@ function renderState(state) {
     }
   }
   if (queueDragActive || queueReorderPending) {
-    if (!pendingQueueState || Date.parse(state.server_time) >= Date.parse(pendingQueueState.server_time)) {
+    if (
+      !pendingQueueState ||
+      Date.parse(state.server_time) >= Date.parse(pendingQueueState.server_time)
+    ) {
       setPendingQueueState(state);
     }
     return;
@@ -79,17 +97,28 @@ function renderState(state) {
     artistEl.textContent = "";
   } else {
     trackEl.textContent = formatting.trackTitle(currentTrack);
-    trackUi.renderSubtitle(artistEl, formatting.trackContext(currentTrack), formatting.playbackRequester(current));
-	audioModule.loadMedia(currentTrack);
+    trackUi.renderSubtitle(
+      artistEl,
+      formatting.trackContext(currentTrack),
+      formatting.playbackRequester(current),
+    );
+    audioModule.loadMedia(currentTrack);
     audioModule.syncAudio(state, timelineChanged);
   }
 
-  queueEl.replaceChildren(...(queue.length ? queue.map(queueModule.renderQueueItem) : [formatting.emptyHint("Queue is empty", "li")]));
+  queueEl.replaceChildren(
+    ...(queue.length
+      ? queue.map(queueModule.renderQueueItem)
+      : [formatting.emptyHint("Queue is empty", "li")]),
+  );
   historyModule.renderHistory(history);
   const canManageQueue = permissions.hasRoomPermission("queue_manage");
   const canControlPlayback = permissions.hasRoomPermission("playback_control");
   clearQueueButton.hidden = !canManageQueue || queue.length === 0;
-  const autoDJ = state.auto_dj || {enabled: false, source: {type: "library", name: "Entire Library"}};
+  const autoDJ = state.auto_dj || {
+    enabled: false,
+    source: { type: "library", name: "Entire Library" },
+  };
   autoDJButton.disabled = !canManageQueue;
   autoDJSourceButton.disabled = !canManageQueue;
   if (!canManageQueue) autoDJModule.closeAutoDJSourceMenu();
@@ -105,7 +134,8 @@ function renderState(state) {
   queueModule.renderQueueChanges(state.actions || []);
   previousButton.disabled = !canControlPlayback || history.length === 0;
   skipButton.disabled = !canControlPlayback;
-  togglePlaybackButton.disabled = !canControlPlayback || (!currentTrack && queue.length === 0);
+  togglePlaybackButton.disabled =
+    !canControlPlayback || (!currentTrack && queue.length === 0);
   permissions.refreshPermissionControls();
   queueModule.updateQueueSortable();
   seekModule.renderPlaybackButton(Boolean(currentTrack && !state.paused));

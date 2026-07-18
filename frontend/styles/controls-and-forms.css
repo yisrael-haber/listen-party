@@ -108,7 +108,10 @@ button.compact {
   font-size: 0.88rem;
 }
 
-.search, .queue-panel, .history-panel, .config-panel {
+.search,
+.queue-panel,
+.history-panel,
+.config-panel {
   margin-bottom: 20px;
   padding: 18px;
   border: 1px solid var(--line);
@@ -116,7 +119,8 @@ button.compact {
   background: var(--panel);
 }
 
-.search, .config-panel {
+.search,
+.config-panel {
   max-width: 860px;
   margin-right: auto;
   margin-left: auto;
@@ -244,7 +248,9 @@ form {
   gap: 10px;
 }
 
-input, textarea, select {
+input,
+textarea,
+select {
   color-scheme: dark;
   width: 100%;
   min-height: 42px;
@@ -272,7 +278,9 @@ textarea {
   resize: vertical;
 }
 
-input:focus, textarea:focus, select:focus {
+input:focus,
+textarea:focus,
+select:focus {
   outline: 2px solid rgba(111, 191, 143, 0.6);
   outline-offset: 2px;
 }
@@ -290,7 +298,8 @@ input:focus, textarea:focus, select:focus {
   font-size: 0.9rem;
 }
 
-#configForm input, #configForm textarea {
+#configForm input,
+#configForm textarea {
   min-height: 38px;
   padding: 8px 12px;
   border-radius: 6px;

@@ -1,189 +1,351 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Listen Party</title>
-  <link rel="stylesheet" href="/assets/style.css">
-</head>
-<body>
-  <main class="app-shell listening-first">
-    <header class="global-bar">
-      <div class="user-strip">
-        <div class="user-session">
-          <span id="currentUser" class="username"></span>
-          <form id="logoutForm" action="/logout" method="post">
-            <button class="secondary compact" type="submit">Logout</button>
-          </form>
-        </div>
-        <select id="roomSelect" class="room-select" aria-label="Room"></select>
-        <div class="room-control-cluster">
-          <div class="presence-menu">
-            <button id="presenceButton" class="secondary compact" type="button" aria-expanded="false" aria-controls="listenerList">
-              <span id="presence" class="status"></span>
-            </button>
-            <div id="listenerList" class="listener-popover" hidden></div>
-          </div>
-          <button id="roomSettingsButton" class="secondary compact icon-only room-settings-button" type="button" title="Room settings" aria-label="Room settings" aria-controls="roomSettingsView" aria-expanded="false" hidden>
-            <svg aria-hidden="true" viewBox="0 0 24 24">
-              <path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"></path>
-            </svg>
-          </button>
-        </div>
-      </div>
-    </header>
-
-    <aside class="library-rail">
-      <section id="roomSettingsView" class="room-settings-view" hidden>
-        <div class="room-settings-header">
-          <button id="closeRoomSettings" class="secondary compact icon-only" type="button" title="Back to library" aria-label="Back to library">
-            <span aria-hidden="true">←</span>
-          </button>
-          <div class="room-settings-copy">
-            <h2>Room permissions</h2>
-            <p class="hint">Manage group access for this room.</p>
-          </div>
-          <div class="room-settings-actions">
-            <span id="roomSettingsStatus" class="status"></span>
-            <button id="saveRoomSettings" class="secondary compact" type="button">Save</button>
-          </div>
-        </div>
-        <div id="roomSettingsGrants"></div>
-      </section>
-
-      <section id="libraryPanel" class="search">
-        <div class="section-head">
-          <div class="rail-tabs" role="tablist" aria-label="Library views">
-            <button id="libraryTab" class="rail-tab active" type="button">Library</button>
-            <button id="playlistsTab" class="rail-tab" type="button">Playlists</button>
-          </div>
-          <span id="libraryStatus" class="status"></span>
-        </div>
-        <form id="searchForm" class="library-view">
-          <label class="search-field">
-            <span>Search by</span>
-            <select id="searchField" name="field">
-              <option value="">All fields</option>
-              <option value="title">Title</option>
-              <option value="artist">Artist</option>
-              <option value="album">Album</option>
-            </select>
-          </label>
-          <label class="search-box">
-            <input id="q" name="q" type="search" placeholder="Search MP3 library" autocomplete="off">
-            <span class="search-icon" aria-hidden="true"></span>
-          </label>
-        </form>
-        <div id="results" class="library-view"></div>
-        <section id="playlistsView" class="playlists-view" hidden>
-          <div class="playlist-toolbar">
-            <button id="newPlaylist" class="secondary compact" type="button">New</button>
-            <input id="playlistFolderInput" type="file" accept="audio/mpeg,.mp3" webkitdirectory multiple hidden>
-          </div>
-          <div id="playlistCreatePanel" class="playlist-create-panel" hidden>
-            <form id="playlistCreateForm" class="playlist-create">
-              <input id="playlistName" type="text" placeholder="Playlist name" autocomplete="off">
-              <button class="secondary compact" type="submit">Create</button>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Listen Party</title>
+    <link rel="stylesheet" href="/assets/style.css" />
+  </head>
+  <body>
+    <main class="app-shell listening-first">
+      <header class="global-bar">
+        <div class="user-strip">
+          <div class="user-session">
+            <span id="currentUser" class="username"></span>
+            <form id="logoutForm" action="/logout" method="post">
+              <button class="secondary compact" type="submit">Logout</button>
             </form>
           </div>
-          <div class="playlist-control-row">
-            <select id="playlistSelect" aria-label="Playlist"></select>
-            <button id="deletePlaylist" class="secondary compact icon-only trash-button" type="button" title="Delete playlist" aria-label="Delete playlist" hidden><span></span></button>
-          </div>
-          <button id="importPlaylistFolder" class="secondary playlist-import-row" type="button" hidden>Import from path...</button>
-          <p id="playlistImportStatus" class="status"></p>
-          <div id="playlistDetail"></div>
-        </section>
-      </section>
-    </aside>
-
-    <section class="playback-area">
-      <div class="playback-lists">
-        <section class="queue-panel">
-          <div class="section-head">
-            <h2>Upcoming Queue</h2>
-            <div class="queue-panel-actions">
-              <div class="queue-changes-menu">
-                <button id="queueChangesButton" class="secondary compact queue-changes-button" type="button" aria-expanded="false" aria-controls="queueChangesList">Queue changes</button>
-                <div id="queueChangesList" class="queue-changes-popover" hidden></div>
-              </div>
-              <button id="clearQueue" class="secondary compact">Clear</button>
+          <select
+            id="roomSelect"
+            class="room-select"
+            aria-label="Room"
+          ></select>
+          <div class="room-control-cluster">
+            <div class="presence-menu">
+              <button
+                id="presenceButton"
+                class="secondary compact"
+                type="button"
+                aria-expanded="false"
+                aria-controls="listenerList"
+              >
+                <span id="presence" class="status"></span>
+              </button>
+              <div id="listenerList" class="listener-popover" hidden></div>
             </div>
-          </div>
-          <ol id="queue"></ol>
-        </section>
-
-        <section class="history-panel">
-          <div class="section-head">
-            <h2>Previously Played</h2>
-            <button id="clearHistory" class="secondary compact">Clear</button>
-          </div>
-          <div id="history"></div>
-        </section>
-      </div>
-
-      <section class="player-bar">
-        <div class="now-playing">
-          <div class="player-artwork-card" aria-hidden="true">
-            <img id="artwork" class="player-artwork" alt="" hidden>
-            <span class="artwork-placeholder">♪</span>
-          </div>
-          <div class="track-copy">
-            <p id="track">Nothing playing</p>
-            <p id="artist"></p>
+            <button
+              id="roomSettingsButton"
+              class="secondary compact icon-only room-settings-button"
+              type="button"
+              title="Room settings"
+              aria-label="Room settings"
+              aria-controls="roomSettingsView"
+              aria-expanded="false"
+              hidden
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"></path>
+              </svg>
+            </button>
           </div>
         </div>
-        <div class="player-controls">
-          <div class="transport-controls">
-            <div class="auto-dj-control">
-              <button id="autoDJ" class="icon-button auto-dj-button" type="button" disabled title="Enable Auto-DJ" aria-label="Enable Auto-DJ" aria-pressed="false">
-                <svg aria-hidden="true" viewBox="0 0 24 24">
-                  <path d="M3 7h3c5 0 7 10 12 10h3"></path>
-                  <path d="m18 14 3 3-3 3"></path>
-                  <path d="M3 17h3c2.2 0 3.8-1.9 5.3-4.1M14.2 8.8C15.3 7.7 16.5 7 18 7h3"></path>
-                  <path d="m18 4 3 3-3 3"></path>
+      </header>
+
+      <aside class="library-rail">
+        <section id="roomSettingsView" class="room-settings-view" hidden>
+          <div class="room-settings-header">
+            <button
+              id="closeRoomSettings"
+              class="secondary compact icon-only"
+              type="button"
+              title="Back to library"
+              aria-label="Back to library"
+            >
+              <span aria-hidden="true">←</span>
+            </button>
+            <div class="room-settings-copy">
+              <h2>Room permissions</h2>
+              <p class="hint">Manage group access for this room.</p>
+            </div>
+            <div class="room-settings-actions">
+              <span id="roomSettingsStatus" class="status"></span>
+              <button
+                id="saveRoomSettings"
+                class="secondary compact"
+                type="button"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+          <div id="roomSettingsGrants"></div>
+        </section>
+
+        <section id="libraryPanel" class="search">
+          <div class="section-head">
+            <div class="rail-tabs" role="tablist" aria-label="Library views">
+              <button id="libraryTab" class="rail-tab active" type="button">
+                Library
+              </button>
+              <button id="playlistsTab" class="rail-tab" type="button">
+                Playlists
+              </button>
+            </div>
+            <span id="libraryStatus" class="status"></span>
+          </div>
+          <form id="searchForm" class="library-view">
+            <label class="search-field">
+              <span>Search by</span>
+              <select id="searchField" name="field">
+                <option value="">All fields</option>
+                <option value="title">Title</option>
+                <option value="artist">Artist</option>
+                <option value="album">Album</option>
+              </select>
+            </label>
+            <label class="search-box">
+              <input
+                id="q"
+                name="q"
+                type="search"
+                placeholder="Search MP3 library"
+                autocomplete="off"
+              />
+              <span class="search-icon" aria-hidden="true"></span>
+            </label>
+          </form>
+          <div id="results" class="library-view"></div>
+          <section id="playlistsView" class="playlists-view" hidden>
+            <div class="playlist-toolbar">
+              <button id="newPlaylist" class="secondary compact" type="button">
+                New
+              </button>
+              <input
+                id="playlistFolderInput"
+                type="file"
+                accept="audio/mpeg,.mp3"
+                webkitdirectory
+                multiple
+                hidden
+              />
+            </div>
+            <div id="playlistCreatePanel" class="playlist-create-panel" hidden>
+              <form id="playlistCreateForm" class="playlist-create">
+                <input
+                  id="playlistName"
+                  type="text"
+                  placeholder="Playlist name"
+                  autocomplete="off"
+                />
+                <button class="secondary compact" type="submit">Create</button>
+              </form>
+            </div>
+            <div class="playlist-control-row">
+              <select id="playlistSelect" aria-label="Playlist"></select>
+              <button
+                id="deletePlaylist"
+                class="secondary compact icon-only trash-button"
+                type="button"
+                title="Delete playlist"
+                aria-label="Delete playlist"
+                hidden
+              >
+                <span></span>
+              </button>
+            </div>
+            <button
+              id="importPlaylistFolder"
+              class="secondary playlist-import-row"
+              type="button"
+              hidden
+            >
+              Import from path...
+            </button>
+            <p id="playlistImportStatus" class="status"></p>
+            <div id="playlistDetail"></div>
+          </section>
+        </section>
+      </aside>
+
+      <section class="playback-area">
+        <div class="playback-lists">
+          <section class="queue-panel">
+            <div class="section-head">
+              <h2>Upcoming Queue</h2>
+              <div class="queue-panel-actions">
+                <div class="queue-changes-menu">
+                  <button
+                    id="queueChangesButton"
+                    class="secondary compact queue-changes-button"
+                    type="button"
+                    aria-expanded="false"
+                    aria-controls="queueChangesList"
+                  >
+                    Queue changes
+                  </button>
+                  <div
+                    id="queueChangesList"
+                    class="queue-changes-popover"
+                    hidden
+                  ></div>
+                </div>
+                <button id="clearQueue" class="secondary compact">Clear</button>
+              </div>
+            </div>
+            <ol id="queue"></ol>
+          </section>
+
+          <section class="history-panel">
+            <div class="section-head">
+              <h2>Previously Played</h2>
+              <button id="clearHistory" class="secondary compact">Clear</button>
+            </div>
+            <div id="history"></div>
+          </section>
+        </div>
+
+        <section class="player-bar">
+          <div class="now-playing">
+            <div class="player-artwork-card" aria-hidden="true">
+              <img id="artwork" class="player-artwork" alt="" hidden />
+              <span class="artwork-placeholder">♪</span>
+            </div>
+            <div class="track-copy">
+              <p id="track">Nothing playing</p>
+              <p id="artist"></p>
+            </div>
+          </div>
+          <div class="player-controls">
+            <div class="transport-controls">
+              <div class="auto-dj-control">
+                <button
+                  id="autoDJ"
+                  class="icon-button auto-dj-button"
+                  type="button"
+                  disabled
+                  title="Enable Auto-DJ"
+                  aria-label="Enable Auto-DJ"
+                  aria-pressed="false"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24">
+                    <path d="M3 7h3c5 0 7 10 12 10h3"></path>
+                    <path d="m18 14 3 3-3 3"></path>
+                    <path
+                      d="M3 17h3c2.2 0 3.8-1.9 5.3-4.1M14.2 8.8C15.3 7.7 16.5 7 18 7h3"
+                    ></path>
+                    <path d="m18 4 3 3-3 3"></path>
+                  </svg>
+                </button>
+                <button
+                  id="autoDJSource"
+                  class="auto-dj-source"
+                  type="button"
+                  disabled
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                >
+                  Entire Library
+                </button>
+                <div
+                  id="autoDJSourceMenu"
+                  class="auto-dj-source-menu"
+                  role="menu"
+                  hidden
+                ></div>
+              </div>
+              <button
+                id="previous"
+                class="icon-button"
+                disabled
+                title="Previous"
+                aria-label="Previous track"
+              >
+                <span class="previous-icon" aria-hidden="true"></span>
+              </button>
+              <button
+                id="togglePlayback"
+                class="icon-button"
+                disabled
+                title="Play"
+                aria-label="Play"
+              >
+                <span class="playback-icon play-icon" aria-hidden="true"></span>
+              </button>
+              <button
+                id="skip"
+                class="icon-button"
+                title="Skip"
+                aria-label="Skip track"
+              >
+                <span class="skip-icon" aria-hidden="true"></span>
+              </button>
+            </div>
+            <label class="seek-control">
+              <span id="elapsed">0:00</span>
+              <input
+                id="seek"
+                type="range"
+                min="0"
+                max="0"
+                step="1"
+                value="0"
+                disabled
+              />
+              <span id="duration">0:00</span>
+            </label>
+            <div class="volume-control">
+              <button
+                id="mute"
+                class="icon-button"
+                type="button"
+                title="Mute"
+                aria-label="Mute"
+              >
+                <svg
+                  class="volume-icon volume-on-icon"
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M11 5 6 9H3v6h3l5 4z"></path>
+                  <path d="M16 8.5a5 5 0 0 1 0 7"></path>
+                  <path d="M19 5a9 9 0 0 1 0 14"></path>
+                </svg>
+                <svg
+                  class="volume-icon volume-muted-icon"
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M11 5 6 9H3v6h3l5 4z"></path>
+                  <path d="m17 9 5 5"></path>
+                  <path d="m22 9-5 5"></path>
                 </svg>
               </button>
-              <button id="autoDJSource" class="auto-dj-source" type="button" disabled aria-haspopup="menu" aria-expanded="false">Entire Library</button>
-              <div id="autoDJSourceMenu" class="auto-dj-source-menu" role="menu" hidden></div>
+              <button
+                id="volumeMode"
+                class="volume-mode"
+                type="button"
+                aria-pressed="false"
+                title="Use room volume"
+              >
+                Local
+              </button>
+              <input
+                id="volume"
+                type="range"
+                min="0"
+                max="0.5"
+                step="0.01"
+                value="0"
+                aria-label="Volume"
+              />
             </div>
-            <button id="previous" class="icon-button" disabled title="Previous" aria-label="Previous track">
-              <span class="previous-icon" aria-hidden="true"></span>
-            </button>
-            <button id="togglePlayback" class="icon-button" disabled title="Play" aria-label="Play">
-              <span class="playback-icon play-icon" aria-hidden="true"></span>
-            </button>
-            <button id="skip" class="icon-button" title="Skip" aria-label="Skip track">
-              <span class="skip-icon" aria-hidden="true"></span>
-            </button>
+            <audio id="audio" preload="metadata"></audio>
           </div>
-          <label class="seek-control">
-            <span id="elapsed">0:00</span>
-            <input id="seek" type="range" min="0" max="0" step="1" value="0" disabled>
-            <span id="duration">0:00</span>
-          </label>
-          <div class="volume-control">
-            <button id="mute" class="icon-button" type="button" title="Mute" aria-label="Mute">
-              <svg class="volume-icon volume-on-icon" aria-hidden="true" viewBox="0 0 24 24">
-                <path d="M11 5 6 9H3v6h3l5 4z"></path>
-                <path d="M16 8.5a5 5 0 0 1 0 7"></path>
-                <path d="M19 5a9 9 0 0 1 0 14"></path>
-              </svg>
-              <svg class="volume-icon volume-muted-icon" aria-hidden="true" viewBox="0 0 24 24">
-                <path d="M11 5 6 9H3v6h3l5 4z"></path>
-                <path d="m17 9 5 5"></path>
-                <path d="m22 9-5 5"></path>
-              </svg>
-            </button>
-            <button id="volumeMode" class="volume-mode" type="button" aria-pressed="false" title="Use room volume">Local</button>
-            <input id="volume" type="range" min="0" max="0.5" step="0.01" value="0" aria-label="Volume">
-          </div>
-          <audio id="audio" preload="metadata"></audio>
-        </div>
+        </section>
       </section>
-    </section>
-  </main>
-  <script src="/assets/vendor/sortable-1.15.7.min.js"></script>
-  <script type="module" src="/assets/app.js"></script>
-</body>
+    </main>
+    <script src="/assets/vendor/sortable-1.15.7.min.js"></script>
+    <script type="module" src="/assets/app.js"></script>
+  </body>
 </html>

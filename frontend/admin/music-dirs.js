@@ -1,10 +1,5 @@
-import {
-  configMusicDirs,
-} from "./state.js";
-import {
-  renderListItem,
-  updateListRemoveButtons,
-} from "./list-editor.js";
+import { configMusicDirs } from "./state.js";
+import { renderListItem, updateListRemoveButtons } from "./list-editor.js";
 import { rescanMusicDir } from "./scan.js";
 
 export function renderMusicDirs(paths) {
@@ -14,14 +9,22 @@ export function renderMusicDirs(paths) {
 }
 
 export function renderMusicDirItem(path) {
-  const row = renderListItem(path, "music-dir-input", "/path/to/music", "Music directory");
+  const row = renderListItem(
+    path,
+    "music-dir-input",
+    "/path/to/music",
+    "Music directory",
+  );
   row.classList.add("music-dir-item");
   const rescan = document.createElement("button");
   rescan.className = "secondary compact path-rescan";
   rescan.type = "button";
   rescan.textContent = "Rescan";
   rescan.addEventListener("click", async () => {
-    await rescanMusicDir(row.querySelector(".music-dir-input").value.trim(), rescan);
+    await rescanMusicDir(
+      row.querySelector(".music-dir-input").value.trim(),
+      rescan,
+    );
   });
   row.insertBefore(rescan, row.lastElementChild);
   return row;
@@ -35,7 +38,9 @@ export function addMusicDir(path = "") {
 }
 
 export function readMusicDirs() {
-  return [...configMusicDirs.querySelectorAll(".music-dir-input")].map((input) => input.value.trim()).filter(Boolean);
+  return [...configMusicDirs.querySelectorAll(".music-dir-input")]
+    .map((input) => input.value.trim())
+    .filter(Boolean);
 }
 
 export function init() {

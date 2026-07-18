@@ -1,8 +1,15 @@
-import { searchTextStorageKey, searchFieldStorageKey, searchTimer, setSearchTimer, searchDebounceMS, storageGet, storageSet } from "./state.js";
+import {
+  searchTextStorageKey,
+  searchFieldStorageKey,
+  searchTimer,
+  setSearchTimer,
+  searchDebounceMS,
+  storageGet,
+  storageSet,
+} from "./state.js";
 import formatting from "./formatting.js";
 import trackUi from "./track-ui.js";
 import apiModule from "./api.js";
-
 
 let searchInput, searchField, resultsEl;
 
@@ -11,18 +18,22 @@ function init() {
   searchField = document.getElementById("searchField");
   resultsEl = document.getElementById("results");
 
-  document.getElementById("searchForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    await runSearch();
-  });
+  document
+    .getElementById("searchForm")
+    .addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await runSearch();
+    });
 
   searchInput.addEventListener("input", () => {
     storageSet(searchTextStorageKey, searchInput.value);
     clearTimeout(searchTimer);
     resultsEl.replaceChildren();
-    setSearchTimer(setTimeout(() => {
-      runSearch().catch(console.error);
-    }, searchDebounceMS));
+    setSearchTimer(
+      setTimeout(() => {
+        runSearch().catch(console.error);
+      }, searchDebounceMS),
+    );
   });
 
   searchField.addEventListener("change", () => {
@@ -35,12 +46,21 @@ function init() {
 async function runSearch() {
   const q = searchInput.value.trim();
   const field = searchField.value;
-  const params = new URLSearchParams({q, field});
+  const params = new URLSearchParams({ q, field });
   const tracks = await apiModule.api(`/api/search?${params}`);
   if (q !== searchInput.value.trim() || field !== searchField.value) {
     return;
   }
-  resultsEl.replaceChildren(...(tracks.length ? tracks.map((track) => trackUi.trackRow(track, trackUi.standardTrackCommands(track.dedupe_key))) : [formatting.emptyHint("No matching tracks")]));
+  resultsEl.replaceChildren(
+    ...(tracks.length
+      ? tracks.map((track) =>
+          trackUi.trackRow(
+            track,
+            trackUi.standardTrackCommands(track.dedupe_key),
+          ),
+        )
+      : [formatting.emptyHint("No matching tracks")]),
+  );
 }
 
 function restoreSearchPreferences() {
