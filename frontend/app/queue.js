@@ -173,6 +173,13 @@ function renderQueueChanges(actions) {
   }
 }
 
+function destroyQueueSortable() {
+  if (queueSortable) {
+    queueSortable.destroy();
+    setQueueSortable(null);
+  }
+}
+
 function initQueueSortable() {
   if (typeof Sortable === "undefined") {
     throw new Error("embedded SortableJS asset did not load");
@@ -278,6 +285,7 @@ export default {
   queueDragHandle,
   handleQueueReorderKey,
   renderQueueChanges,
+  destroyQueueSortable,
   initQueueSortable,
   updateQueueSortable,
   applyPendingQueueState,

@@ -110,11 +110,13 @@ function renderState(state) {
     audioModule.syncAudio(state, timelineChanged);
   }
 
+  queueModule.destroyQueueSortable();
   queueEl.replaceChildren(
     ...(queue.length
       ? queue.map(queueModule.renderQueueItem)
       : [formatting.emptyHint("Queue is empty", "li")]),
   );
+  queueModule.initQueueSortable();
   historyModule.renderHistory(history);
   const canManageQueue = permissions.hasRoomPermission("queue_manage");
   const canControlPlayback = permissions.hasRoomPermission("playback_control");
