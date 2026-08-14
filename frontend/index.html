@@ -142,11 +142,39 @@
               <button id="libraryTab" class="rail-tab active" type="button">
                 Library
               </button>
+              <button id="albumsTab" class="rail-tab" type="button">
+                Albums
+              </button>
               <button id="playlistsTab" class="rail-tab" type="button">
                 Playlists
               </button>
             </div>
-            <span id="libraryStatus" class="status"></span>
+            <div class="library-status-row">
+              <span id="libraryStatus" class="status"></span>
+              <button
+                id="rescanLibrary"
+                class="secondary compact"
+                type="button"
+                title="Resync the configured music directories"
+              >
+                Resync
+              </button>
+            </div>
+          </div>
+          <div
+            id="scanProgress"
+            class="scan-progress"
+            role="status"
+            aria-live="polite"
+            hidden
+          >
+            <div class="scan-progress-head">
+              <span id="scanProgressStage" class="scan-progress-stage"></span>
+              <span id="scanProgressDetail" class="hint"></span>
+            </div>
+            <div class="scan-progress-track" aria-hidden="true">
+              <span class="scan-progress-bar"></span>
+            </div>
           </div>
           <form id="searchForm" class="library-view">
             <label class="search-field">
@@ -163,13 +191,42 @@
                 id="q"
                 name="q"
                 type="search"
-                placeholder="Search MP3 library"
+                placeholder="Search music library"
                 autocomplete="off"
               />
               <span class="search-icon" aria-hidden="true"></span>
             </label>
           </form>
           <div id="results" class="library-view"></div>
+          <section id="albumsView" class="albums-view" hidden>
+            <div id="albumsToolbar" class="albums-toolbar">
+              <label class="search-box album-search-box">
+                <input
+                  id="albumSearch"
+                  type="search"
+                  placeholder="Search albums"
+                  autocomplete="off"
+                />
+                <span class="search-icon" aria-hidden="true"></span>
+              </label>
+              <span id="albumStatus" class="status"></span>
+            </div>
+            <div id="albumDetailHead" class="album-detail-head" hidden>
+              <button
+                id="closeAlbumDetail"
+                class="secondary compact icon-only"
+                type="button"
+                title="Back to albums"
+                aria-label="Back to albums"
+              >
+                <span aria-hidden="true">←</span>
+              </button>
+              <div id="albumDetailCopy" class="album-detail-copy"></div>
+              <div id="albumDetailActions" class="row-actions"></div>
+            </div>
+            <div id="albumList" class="album-list"></div>
+            <div id="albumDetail" class="album-detail" hidden></div>
+          </section>
           <section id="playlistsView" class="playlists-view" hidden>
             <div class="playlist-toolbar">
               <button id="newPlaylist" class="secondary compact" type="button">
@@ -178,7 +235,7 @@
               <input
                 id="playlistFolderInput"
                 type="file"
-                accept="audio/mpeg,.mp3"
+                accept="audio/mpeg,audio/flac,audio/wav,.mp3,.flac,.wav"
                 webkitdirectory
                 multiple
                 hidden

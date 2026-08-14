@@ -68,10 +68,10 @@ function commandButton(text, body) {
 }
 
 function commandIcon(action) {
-  if (action === "queue_add") {
+  if (action === "queue_add" || action === "queue_album") {
     return "≡+";
   }
-  if (action === "play_now" || action === "play") {
+  if (action === "play_now" || action === "play" || action === "play_album") {
     return "▶";
   }
   return "";

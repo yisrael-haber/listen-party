@@ -283,7 +283,7 @@
 
 .rail-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   width: 100%;
   gap: 0;
   min-height: 48px;
@@ -313,6 +313,179 @@
   border-bottom-color: var(--accent);
   background: transparent;
   color: var(--accent-strong);
+}
+
+.library-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.library-status-row .status {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+#rescanLibrary {
+  flex: 0 0 auto;
+  min-width: 86px;
+}
+
+.scan-progress {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 6px;
+  margin: 10px 14px 0;
+}
+
+.scan-progress[hidden] {
+  display: none;
+}
+
+.scan-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.scan-progress-stage {
+  color: var(--accent-strong);
+  font-size: 0.85rem;
+  text-transform: capitalize;
+}
+
+.scan-progress-head .hint {
+  overflow: hidden;
+  margin: 0;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan-progress-track {
+  position: relative;
+  overflow: hidden;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.075);
+}
+
+.scan-progress-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 35%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: scan-progress-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes scan-progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.albums-view {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+  min-height: 0;
+  padding-top: 12px;
+}
+
+.albums-view[hidden] {
+  display: none;
+}
+
+.albums-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.albums-toolbar[hidden] {
+  display: none;
+}
+
+.album-search-box {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.album-list,
+.album-detail {
+  overflow: auto;
+  min-height: 0;
+  scrollbar-gutter: stable;
+}
+
+.album-list[hidden],
+.album-detail[hidden],
+.album-detail-head[hidden] {
+  display: none;
+}
+
+.album-open {
+  display: block;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.album-open:hover {
+  background: transparent;
+}
+
+.album-detail-head {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.065);
+}
+
+.album-detail-copy {
+  min-width: 0;
+}
+
+.album-detail-title {
+  overflow: hidden;
+  margin: 0;
+  font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.album-detail-copy .hint {
+  overflow: hidden;
+  margin: 2px 0 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.album-detail-head .row-actions {
+  gap: 6px;
+}
+
+.album-detail-head .row-command-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .playlists-view {

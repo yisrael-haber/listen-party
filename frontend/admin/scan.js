@@ -42,7 +42,7 @@ export function renderScanStatus(scan) {
       roots.length === 1
         ? `Scanning ${shortPath(roots[0])}`
         : `Scanning ${roots.length || 0} folders`;
-    scanStatus.textContent = `${scope}: ${scan.mp3_seen || 0} seen, ${scan.indexed || 0} indexed, ${scan.unchanged || 0} unchanged, ${formatRate(scan.recent_tracks_per_sec)} recent`;
+    scanStatus.textContent = `${scope}: ${scan.files_seen || 0} seen, ${scan.indexed || 0} indexed, ${scan.unchanged || 0} unchanged, ${formatRate(scan.recent_tracks_per_sec)} recent`;
     scanStatus.dataset.kind = "working";
     return true;
   }

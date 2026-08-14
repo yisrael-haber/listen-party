@@ -1,4 +1,5 @@
 import {
+  audioExtensions,
   playlists,
   selectedPlaylistID,
   playlistStorageKey,
@@ -24,10 +25,17 @@ let playlistSelect,
   playlistImportStatus,
   libraryTab,
   playlistsTab,
+  albumsTab,
   libraryViews,
   playlistsView,
-  libraryStatus,
+  albumsView,
   playlistDetailEl;
+
+let loadAlbums = () => Promise.resolve();
+
+function setAlbumsLoader(loader) {
+  loadAlbums = loader;
+}
 
 function init() {
   playlistSelect = document.getElementById("playlistSelect");
@@ -41,13 +49,15 @@ function init() {
   playlistImportStatus = document.getElementById("playlistImportStatus");
   libraryTab = document.getElementById("libraryTab");
   playlistsTab = document.getElementById("playlistsTab");
+  albumsTab = document.getElementById("albumsTab");
   libraryViews = document.querySelectorAll(".library-view");
   playlistsView = document.getElementById("playlistsView");
-  libraryStatus = document.getElementById("libraryStatus");
+  albumsView = document.getElementById("albumsView");
   playlistDetailEl = document.getElementById("playlistDetail");
 
   libraryTab.addEventListener("click", () => setRailMode("library"));
   playlistsTab.addEventListener("click", () => setRailMode("playlists"));
+  albumsTab.addEventListener("click", () => setRailMode("albums"));
 
   playlistSelect.addEventListener("change", async () => {
     playlistImportStatus.textContent = "";
@@ -108,7 +118,11 @@ function init() {
       return;
     }
     const files = [...playlistFolderInput.files]
-      .filter((file) => file.name.toLowerCase().endsWith(".mp3"))
+      .filter((file) =>
+        audioExtensions.some((extension) =>
+          file.name.toLowerCase().endsWith(extension),
+        ),
+      )
       .map((file) => ({
         relative_path: file.webkitRelativePath || file.name,
         size: file.size,
@@ -116,7 +130,7 @@ function init() {
       }));
     if (files.length === 0) {
       playlistImportStatus.textContent =
-        "The selected folder contains no MP3 files";
+        "The selected folder contains no audio files";
       return;
     }
     importPlaylistFolderButton.disabled = true;
@@ -266,35 +280,31 @@ function restoreRailPreferences() {
       ? storedPlaylistID
       : 0,
   );
-  const mode =
-    storageGet(railModeStorageKey) === "playlists" ? "playlists" : "library";
+  const stored = storageGet(railModeStorageKey);
+  const mode = ["playlists", "albums"].includes(stored) ? stored : "library";
   setRailMode(mode, { load: false, persist: false });
 }
 
 function setRailMode(mode, { load = true, persist = true } = {}) {
   const playlistsActive = mode === "playlists";
-  const libraryActive = !playlistsActive;
+  const albumsActive = mode === "albums";
+  const libraryActive = !playlistsActive && !albumsActive;
   if (persist) {
     storageSet(railModeStorageKey, mode);
   }
   libraryTab.classList.toggle("active", libraryActive);
   playlistsTab.classList.toggle("active", playlistsActive);
+  albumsTab.classList.toggle("active", albumsActive);
   libraryViews.forEach((el) => {
     el.hidden = !libraryActive;
   });
   playlistsView.hidden = !playlistsActive;
+  albumsView.hidden = !albumsActive;
   if (playlistsActive && load) {
     loadPlaylists(selectedPlaylistID).catch(console.error);
   }
-}
-
-async function loadLibraryStatus() {
-  try {
-    const info = await apiModule.api("/api/library");
-    libraryStatus.textContent = `${info.track_count} tracks indexed`;
-  } catch (err) {
-    libraryStatus.textContent = "Library status unavailable";
-    console.error(err);
+  if (albumsActive && load) {
+    loadAlbums().catch(console.error);
   }
 }
 
@@ -318,7 +328,7 @@ export default {
   closePlaylistAddMenus,
   restoreRailPreferences,
   setRailMode,
-  loadLibraryStatus,
+  setAlbumsLoader,
   getPlaylists,
   getSelectedPlaylistID,
 };

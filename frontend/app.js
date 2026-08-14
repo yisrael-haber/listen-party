@@ -6,6 +6,8 @@ import audio from "./app/audio.js";
 import queue from "./app/queue.js";
 import search from "./app/search.js";
 import playlists from "./app/playlists.js";
+import albums from "./app/albums.js";
+import library from "./app/library.js";
 import roomSettings from "./app/room-settings.js";
 import presence from "./app/presence.js";
 import autoDJ from "./app/auto-dj.js";
@@ -20,12 +22,16 @@ audio.init();
 queue.init();
 search.init();
 playlists.init();
+albums.init();
+library.init();
+playlists.setAlbumsLoader(albums.loadAlbums);
 roomSettings.init();
 room.init();
 presence.init();
 autoDJ.init();
 
 search.restoreSearchPreferences();
+albums.restoreAlbumPreferences();
 playlists.restoreRailPreferences();
 seek.renderPlaybackButton(false);
 volume.applyAudioSettings(0, false);
@@ -75,8 +81,9 @@ async function start() {
   volume.restoreVolumePreferences();
   queue.initQueueSortable();
   audio.connectEvents();
-  playlists.loadLibraryStatus();
+  library.loadLibraryStatus().then(() => library.scheduleStatusPoll());
   playlists.loadPlaylists().catch(console.error);
+  albums.loadAlbums().catch(console.error);
   search.runSearch().catch(console.error);
   apiModule
     .api(roomAPI("/api/state"))

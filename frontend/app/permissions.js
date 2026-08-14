@@ -7,11 +7,19 @@ function hasRoomPermission(permission) {
 
 function canRunCommand(action) {
   if (
-    ["play", "play_now", "pause", "previous", "seek", "skip"].includes(action)
+    [
+      "play",
+      "play_now",
+      "play_album",
+      "pause",
+      "previous",
+      "seek",
+      "skip",
+    ].includes(action)
   ) {
     return hasRoomPermission("playback_control");
   }
-  if (action === "queue_add") {
+  if (action === "queue_add" || action === "queue_album") {
     return hasRoomPermission("queue_add");
   }
   return hasRoomPermission("queue_manage");

@@ -22,18 +22,31 @@ import (
 )
 
 type Track struct {
-	ID         int64 `json:"id"`
-	path       string
-	Title      string    `json:"title"`
-	Artist     string    `json:"artist"`
-	Album      string    `json:"album"`
-	TrackNo    int       `json:"track_no"`
-	DurationMS int64     `json:"duration_ms"`
-	Size       int64     `json:"size"`
-	ModTime    time.Time `json:"mod_time"`
-	DedupeKey  string    `json:"dedupe_key"`
-	MatchKey   string    `json:"match_key"`
-	Available  bool      `json:"available"`
+	ID          int64 `json:"id"`
+	path        string
+	Title       string    `json:"title"`
+	Artist      string    `json:"artist"`
+	Album       string    `json:"album"`
+	AlbumArtist string    `json:"album_artist"`
+	TrackNo     int       `json:"track_no"`
+	DiscNo      int       `json:"disc_no"`
+	DurationMS  int64     `json:"duration_ms"`
+	Size        int64     `json:"size"`
+	ModTime     time.Time `json:"mod_time"`
+	DedupeKey   string    `json:"dedupe_key"`
+	MatchKey    string    `json:"match_key"`
+	AlbumKey    string    `json:"album_key"`
+	Format      string    `json:"format"`
+	Available   bool      `json:"available"`
+}
+
+type Album struct {
+	Key        string `json:"key"`
+	Name       string `json:"name"`
+	Artist     string `json:"artist"`
+	TrackCount int    `json:"track_count"`
+	DurationMS int64  `json:"duration_ms"`
+	ArtworkID  int64  `json:"artwork_id"`
 }
 
 type Playlist struct {
@@ -96,7 +109,11 @@ func (m *Media) Close() error {
 }
 
 func (m *Media) Name() string {
-	return m.Track.Title + ".mp3"
+	return m.Track.Title + audioExtension(m.Track.path)
+}
+
+func (m *Media) ContentType() string {
+	return contentType(m.Track.path)
 }
 
 func (m *Media) ModTime() time.Time {
@@ -106,22 +123,26 @@ func (m *Media) ModTime() time.Time {
 type Library struct {
 	mu              sync.RWMutex
 	scanMu          sync.Mutex
+	restartMu       sync.Mutex
+	cancelMu        sync.Mutex
 	statusMu        sync.RWMutex
 	durationLoading sync.Map
 	db              *sql.DB
 	dirs            []string
 	workers         int
+	cancelScan      context.CancelFunc
 	status          ScanStatus
 }
 
 type ScanStatus struct {
 	Scanning            bool      `json:"scanning"`
+	Stage               string    `json:"stage"`
 	Roots               []string  `json:"roots"`
 	LastStarted         time.Time `json:"last_started"`
 	LastCompleted       time.Time `json:"last_completed"`
 	LastError           string    `json:"last_error"`
 	DurationMS          int64     `json:"duration_ms"`
-	MP3Seen             int       `json:"mp3_seen"`
+	FilesSeen           int       `json:"files_seen"`
 	Parsed              int64     `json:"parsed"`
 	Indexed             int64     `json:"indexed"`
 	Unchanged           int       `json:"unchanged"`
@@ -135,15 +156,29 @@ type ScanStatus struct {
 	AverageTracksPerSec float64   `json:"average_tracks_per_sec"`
 }
 
+const (
+	ScanStageIdle      = ""
+	ScanStageIndex     = "loading index"
+	ScanStageFiles     = "scanning files"
+	ScanStageRemoving  = "removing missing tracks"
+	ScanStageComplete  = "complete"
+	ScanStageCanceled  = "canceled"
+	ScanStageFailed    = "failed"
+	scanStatusInterval = 500 * time.Millisecond
+)
+
 var (
 	ErrTrackNotFound    = errors.New("track not found")
 	ErrPlaylistNotFound = errors.New("playlist not found")
+	ErrAlbumNotFound    = errors.New("album not found")
 	ErrScanInProgress   = errors.New("library scan already in progress")
 )
 
 const (
 	defaultTrackQueryLimit = 25
 	maxTrackQueryLimit     = 100
+	maxAlbumQueryLimit     = 500
+	maxAlbumTrackLimit     = 500
 	scanWriteBatchSize     = 1000
 	scanWriteDrainMax      = 4000
 	scanPathBufferSize     = 4096
@@ -151,8 +186,9 @@ const (
 	scanProgressLogEvery   = 5 * time.Second
 )
 
-const trackSelectColumns = `id, path, title, artist, album, track_no, duration_ms, size, mod_time, dedupe_key, match_key, available`
-const qualifiedTrackSelectColumns = `t.id, t.path, t.title, t.artist, t.album, t.track_no, t.duration_ms, t.size, t.mod_time, t.dedupe_key, t.match_key, t.available`
+const trackSelectColumns = `id, path, title, artist, album, album_artist, track_no, disc_no, duration_ms, size, mod_time, dedupe_key, match_key, album_key, available`
+const tracksTableSelectColumns = `tracks.id, tracks.path, tracks.title, tracks.artist, tracks.album, tracks.album_artist, tracks.track_no, tracks.disc_no, tracks.duration_ms, tracks.size, tracks.mod_time, tracks.dedupe_key, tracks.match_key, tracks.album_key, tracks.available`
+const qualifiedTrackSelectColumns = `t.id, t.path, t.title, t.artist, t.album, t.album_artist, t.track_no, t.disc_no, t.duration_ms, t.size, t.mod_time, t.dedupe_key, t.match_key, t.album_key, t.available`
 
 func Open(ctx context.Context, path string, dirs []string, workers int) (*Library, error) {
 	db, err := openDB(path)
@@ -222,12 +258,16 @@ CREATE TABLE IF NOT EXISTS tracks (
 	title TEXT NOT NULL,
 	artist TEXT NOT NULL,
 	album TEXT NOT NULL,
+	album_artist TEXT NOT NULL DEFAULT '',
 	track_no INTEGER NOT NULL DEFAULT 0,
+	disc_no INTEGER NOT NULL DEFAULT 0,
 	duration_ms INTEGER NOT NULL DEFAULT 0,
 	size INTEGER NOT NULL,
 	mod_time INTEGER NOT NULL,
 	dedupe_key TEXT NOT NULL DEFAULT '',
 	match_key TEXT NOT NULL DEFAULT '',
+	album_key TEXT NOT NULL DEFAULT '',
+	meta_version INTEGER NOT NULL DEFAULT 0,
 	available INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS tracks_available_idx ON tracks(available);
@@ -280,6 +320,9 @@ CREATE INDEX IF NOT EXISTS playlist_items_playlist_dedupe_idx ON playlist_items(
 		return err
 	}
 	if _, err := l.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS tracks_dedupe_idx ON tracks(dedupe_key, available)`); err != nil {
+		return err
+	}
+	if _, err := l.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS tracks_album_idx ON tracks(album_key, available)`); err != nil {
 		return err
 	}
 	if !ftsExists {
@@ -362,13 +405,22 @@ func (l *Library) ensureTrackKeyColumns(ctx context.Context) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if !columns["dedupe_key"] {
-		if _, err := l.db.ExecContext(ctx, `ALTER TABLE tracks ADD COLUMN dedupe_key TEXT NOT NULL DEFAULT ''`); err != nil {
-			return err
-		}
+	added := []struct {
+		name       string
+		definition string
+	}{
+		{"dedupe_key", `TEXT NOT NULL DEFAULT ''`},
+		{"match_key", `TEXT NOT NULL DEFAULT ''`},
+		{"album_artist", `TEXT NOT NULL DEFAULT ''`},
+		{"album_key", `TEXT NOT NULL DEFAULT ''`},
+		{"disc_no", `INTEGER NOT NULL DEFAULT 0`},
+		{"meta_version", `INTEGER NOT NULL DEFAULT 0`},
 	}
-	if !columns["match_key"] {
-		if _, err := l.db.ExecContext(ctx, `ALTER TABLE tracks ADD COLUMN match_key TEXT NOT NULL DEFAULT ''`); err != nil {
+	for _, column := range added {
+		if columns[column.name] {
+			continue
+		}
+		if _, err := l.db.ExecContext(ctx, `ALTER TABLE tracks ADD COLUMN `+column.name+` `+column.definition); err != nil {
 			return err
 		}
 	}
@@ -376,7 +428,7 @@ func (l *Library) ensureTrackKeyColumns(ctx context.Context) error {
 }
 
 func (l *Library) backfillTrackKeys(ctx context.Context) error {
-	rows, err := l.db.QueryContext(ctx, `SELECT `+trackSelectColumns+` FROM tracks WHERE dedupe_key = '' OR match_key = ''`)
+	rows, err := l.db.QueryContext(ctx, `SELECT `+trackSelectColumns+` FROM tracks WHERE dedupe_key = '' OR match_key = '' OR (album_key = '' AND album <> '')`)
 	if err != nil {
 		return err
 	}
@@ -403,13 +455,13 @@ func (l *Library) backfillTrackKeys(ctx context.Context) error {
 			tx.Rollback()
 		}
 	}()
-	stmt, err := tx.PrepareContext(ctx, `UPDATE tracks SET dedupe_key = ?, match_key = ? WHERE id = ?`)
+	stmt, err := tx.PrepareContext(ctx, `UPDATE tracks SET dedupe_key = ?, match_key = ?, album_key = ? WHERE id = ?`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, t := range tracks {
-		if _, err := stmt.ExecContext(ctx, t.DedupeKey, t.MatchKey, t.ID); err != nil {
+		if _, err := stmt.ExecContext(ctx, t.DedupeKey, t.MatchKey, t.AlbumKey, t.ID); err != nil {
 			return err
 		}
 	}
@@ -461,24 +513,29 @@ func (l *Library) tableExists(ctx context.Context, name string) (bool, error) {
 	return err == nil, err
 }
 
-func (l *Library) loadKnownTracks(ctx context.Context, roots []string) (map[string]int64, error) {
-	rows, err := l.db.QueryContext(ctx, `SELECT path, mod_time FROM tracks WHERE available = 1`)
+type knownTrack struct {
+	modTime     int64
+	metaVersion int
+}
+
+func (l *Library) loadKnownTracks(ctx context.Context, roots []string) (map[string]knownTrack, error) {
+	rows, err := l.db.QueryContext(ctx, `SELECT path, mod_time, meta_version FROM tracks WHERE available = 1`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	known := make(map[string]int64)
+	known := make(map[string]knownTrack)
 	for rows.Next() {
 		var path string
-		var modTime int64
-		if err := rows.Scan(&path, &modTime); err != nil {
+		var entry knownTrack
+		if err := rows.Scan(&path, &entry.modTime, &entry.metaVersion); err != nil {
 			return nil, err
 		}
 		if len(roots) > 0 && !pathInRoots(path, roots) {
 			continue
 		}
-		known[path] = modTime
+		known[path] = entry
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -504,18 +561,22 @@ func pathInRoot(path string, root string) bool {
 }
 
 const upsertTrackSQL = `
-INSERT INTO tracks(path, title, artist, album, track_no, duration_ms, size, mod_time, dedupe_key, match_key, available)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+INSERT INTO tracks(path, title, artist, album, album_artist, track_no, disc_no, duration_ms, size, mod_time, dedupe_key, match_key, album_key, meta_version, available)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
 ON CONFLICT(path) DO UPDATE SET
 	title = excluded.title,
 	artist = excluded.artist,
 	album = excluded.album,
+	album_artist = excluded.album_artist,
 	track_no = excluded.track_no,
+	disc_no = excluded.disc_no,
 	duration_ms = excluded.duration_ms,
 	size = excluded.size,
 	mod_time = excluded.mod_time,
 	dedupe_key = excluded.dedupe_key,
 	match_key = excluded.match_key,
+	album_key = excluded.album_key,
+	meta_version = excluded.meta_version,
 	available = 1
 `
 
@@ -546,7 +607,7 @@ func (l *Library) flushTracks(ctx context.Context, tracks []Track) error {
 			t.Title = fallbackTitle(t.path)
 		}
 		setTrackKeys(&t)
-		if _, err := stmt.ExecContext(ctx, t.path, t.Title, t.Artist, t.Album, t.TrackNo, t.DurationMS, t.Size, t.ModTime.Unix(), t.DedupeKey, t.MatchKey); err != nil {
+		if _, err := stmt.ExecContext(ctx, t.path, t.Title, t.Artist, t.Album, t.AlbumArtist, t.TrackNo, t.DiscNo, t.DurationMS, t.Size, t.ModTime.Unix(), t.DedupeKey, t.MatchKey, t.AlbumKey, trackMetaVersion); err != nil {
 			return err
 		}
 	}
@@ -604,7 +665,7 @@ func (l *Library) writeScannedTracks(ctx context.Context, tracks <-chan Track, i
 	}
 }
 
-func (l *Library) deleteMissing(ctx context.Context, paths map[string]int64) error {
+func (l *Library) deleteMissing(ctx context.Context, paths map[string]knownTrack) error {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -668,9 +729,9 @@ func (l *Library) SearchField(ctx context.Context, q string, field string) ([]Tr
 		return l.recent(ctx, limit)
 	}
 	rows, err := l.db.QueryContext(ctx, `
-SELECT id, path, title, artist, album, track_no, duration_ms, size, mod_time, dedupe_key, match_key, available
+SELECT `+trackSelectColumns+`
 FROM (
-	SELECT tracks.id, tracks.path, tracks.title, tracks.artist, tracks.album, tracks.track_no, tracks.duration_ms, tracks.size, tracks.mod_time, tracks.dedupe_key, tracks.match_key, tracks.available,
+	SELECT `+tracksTableSelectColumns+`,
 		row_number() OVER (PARTITION BY tracks.dedupe_key ORDER BY tracks.path ASC) AS rn
 	FROM tracks
 	JOIN tracks_fts ON tracks_fts.rowid = tracks.id
@@ -710,7 +771,7 @@ func searchFTSQuery(q string, field string) string {
 func (l *Library) recent(ctx context.Context, limit int) ([]Track, error) {
 	limit = clampTrackQueryLimit(limit)
 	rows, err := l.db.QueryContext(ctx, `
-SELECT id, path, title, artist, album, track_no, duration_ms, size, mod_time, dedupe_key, match_key, available
+SELECT `+trackSelectColumns+`
 FROM (
 	SELECT `+trackSelectColumns+`,
 		row_number() OVER (PARTITION BY dedupe_key ORDER BY path ASC) AS rn
@@ -735,6 +796,110 @@ func clampTrackQueryLimit(limit int) int {
 		return maxTrackQueryLimit
 	}
 	return limit
+}
+
+func (l *Library) ListAlbums(ctx context.Context, q string) ([]Album, error) {
+	filter := ""
+	var args []any
+	if term := strings.ToLower(strings.TrimSpace(q)); term != "" {
+		filter = ` AND (lower(album) LIKE ? OR lower(album_artist) LIKE ? OR lower(artist) LIKE ?)`
+		like := "%" + term + "%"
+		args = append(args, like, like, like)
+	}
+	args = append(args, maxAlbumQueryLimit)
+	rows, err := l.db.QueryContext(ctx, `
+SELECT album_key, MIN(album), MIN(display_artist), COUNT(*), SUM(duration_ms), MIN(id)
+FROM (
+	SELECT id, album, album_key, duration_ms,
+		COALESCE(NULLIF(album_artist, ''), artist) AS display_artist,
+		row_number() OVER (PARTITION BY dedupe_key ORDER BY path ASC) AS rn
+	FROM tracks
+	WHERE available = 1 AND album_key <> ''`+filter+`
+)
+WHERE rn = 1
+GROUP BY album_key
+ORDER BY MIN(album) COLLATE NOCASE ASC, MIN(display_artist) COLLATE NOCASE ASC
+LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var albums []Album
+	for rows.Next() {
+		var album Album
+		if err := rows.Scan(&album.Key, &album.Name, &album.Artist, &album.TrackCount, &album.DurationMS, &album.ArtworkID); err != nil {
+			return nil, err
+		}
+		albums = append(albums, album)
+	}
+	return albums, rows.Err()
+}
+
+func (l *Library) Album(ctx context.Context, key string) (Album, []Track, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return Album{}, nil, ErrAlbumNotFound
+	}
+	tracks, err := l.AlbumTracks(ctx, key)
+	if err != nil {
+		return Album{}, nil, err
+	}
+	if len(tracks) == 0 {
+		return Album{}, nil, ErrAlbumNotFound
+	}
+	album := Album{
+		Key:        key,
+		Name:       tracks[0].Album,
+		Artist:     albumDisplayArtist(tracks),
+		TrackCount: len(tracks),
+		ArtworkID:  tracks[0].ID,
+	}
+	for _, track := range tracks {
+		album.DurationMS += track.DurationMS
+	}
+	return album, tracks, nil
+}
+
+func (l *Library) AlbumTracks(ctx context.Context, key string) ([]Track, error) {
+	rows, err := l.db.QueryContext(ctx, `
+SELECT `+trackSelectColumns+`
+FROM (
+	SELECT `+trackSelectColumns+`,
+		row_number() OVER (PARTITION BY dedupe_key ORDER BY path ASC) AS rn
+	FROM tracks
+	WHERE available = 1 AND album_key = ?
+)
+WHERE rn = 1
+ORDER BY disc_no ASC, track_no ASC, title COLLATE NOCASE ASC
+LIMIT ?`, key, maxAlbumTrackLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTracks(rows)
+}
+
+func albumDisplayArtist(tracks []Track) string {
+	for _, track := range tracks {
+		if track.AlbumArtist != "" {
+			return track.AlbumArtist
+		}
+	}
+	artist := ""
+	for _, track := range tracks {
+		if track.Artist == "" {
+			continue
+		}
+		if artist == "" {
+			artist = track.Artist
+			continue
+		}
+		if !strings.EqualFold(artist, track.Artist) {
+			return "Various artists"
+		}
+	}
+	return artist
 }
 
 func (l *Library) Count(ctx context.Context) (int64, error) {
@@ -800,7 +965,7 @@ WHERE id = ? AND available = 1`, id)
 		return Track{}, err
 	}
 	if fillDuration && track.DurationMS == 0 {
-		track.DurationMS = mp3DurationMS(track.path)
+		track.DurationMS = trackDurationMS(track.path)
 		if track.DurationMS > 0 {
 			_, _ = l.db.ExecContext(ctx, `UPDATE tracks SET duration_ms = ? WHERE id = ?`, track.DurationMS, id)
 		}
@@ -1079,7 +1244,7 @@ func (l *Library) ImportPlaylistFolder(ctx context.Context, playlistID int64, fi
 	matched := make([]indexedFile, 0, len(files))
 	for _, manifest := range files {
 		relative, ok := cleanManifestPath(manifest.RelativePath)
-		if !ok || !isMP3(relative) {
+		if !ok || !isSupportedAudio(relative) {
 			result.Unmatched++
 			continue
 		}
@@ -1327,11 +1492,12 @@ func scanTrack(row rowScanner) (Track, error) {
 	var t Track
 	var unix int64
 	var available int
-	if err := row.Scan(&t.ID, &t.path, &t.Title, &t.Artist, &t.Album, &t.TrackNo, &t.DurationMS, &t.Size, &unix, &t.DedupeKey, &t.MatchKey, &available); err != nil {
+	if err := row.Scan(&t.ID, &t.path, &t.Title, &t.Artist, &t.Album, &t.AlbumArtist, &t.TrackNo, &t.DiscNo, &t.DurationMS, &t.Size, &unix, &t.DedupeKey, &t.MatchKey, &t.AlbumKey, &available); err != nil {
 		return Track{}, err
 	}
 	t.ModTime = time.Unix(unix, 0)
 	t.Available = available == 1
+	t.Format = formatName(t.path)
 	normalizeTrackDisplay(&t)
 	setTrackKeys(&t)
 	return t, nil
@@ -1365,8 +1531,10 @@ func (l *Library) ScanStatus() ScanStatus {
 	return l.status
 }
 
-func isMP3(path string) bool {
-	return strings.EqualFold(filepath.Ext(path), ".mp3")
+func (l *Library) setScanStage(stage string) {
+	l.statusMu.Lock()
+	l.status.Stage = stage
+	l.statusMu.Unlock()
 }
 
 func shouldIgnoreDir(name string) bool {
@@ -1392,7 +1560,37 @@ func (l *Library) Scan(ctx context.Context) (err error) {
 	dirs := append([]string(nil), l.dirs...)
 	workers := l.workers
 	l.mu.RUnlock()
-	return l.scanDirs(ctx, dirs, workers, nil)
+	return l.scanDirs(ctx, dirs, workers, nil, false)
+}
+
+func (l *Library) RestartScan(ctx context.Context) error {
+	if !l.restartMu.TryLock() {
+		return ErrScanInProgress
+	}
+	defer l.restartMu.Unlock()
+	l.CancelScan()
+	l.mu.RLock()
+	dirs := append([]string(nil), l.dirs...)
+	workers := l.workers
+	l.mu.RUnlock()
+	return l.scanDirs(ctx, dirs, workers, nil, true)
+}
+
+func (l *Library) CancelScan() bool {
+	l.cancelMu.Lock()
+	cancel := l.cancelScan
+	l.cancelMu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	return true
+}
+
+func (l *Library) setScanCancel(cancel context.CancelFunc) {
+	l.cancelMu.Lock()
+	l.cancelScan = cancel
+	l.cancelMu.Unlock()
 }
 
 func (l *Library) ScanDir(ctx context.Context, dir string) error {
@@ -1400,11 +1598,13 @@ func (l *Library) ScanDir(ctx context.Context, dir string) error {
 	workers := l.workers
 	l.mu.RUnlock()
 	dirs := []string{dir}
-	return l.scanDirs(ctx, dirs, workers, dirs)
+	return l.scanDirs(ctx, dirs, workers, dirs, false)
 }
 
-func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, deletionRoots []string) (err error) {
-	if !l.scanMu.TryLock() {
+func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, deletionRoots []string, wait bool) (err error) {
+	if wait {
+		l.scanMu.Lock()
+	} else if !l.scanMu.TryLock() {
 		return ErrScanInProgress
 	}
 	defer l.scanMu.Unlock()
@@ -1413,6 +1613,7 @@ func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, dele
 	l.statusMu.Lock()
 	l.status = ScanStatus{
 		Scanning:    true,
+		Stage:       ScanStageIndex,
 		Roots:       append([]string(nil), dirs...),
 		LastStarted: started,
 	}
@@ -1422,8 +1623,14 @@ func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, dele
 		l.status.Scanning = false
 		l.status.LastCompleted = time.Now()
 		l.status.DurationMS = time.Since(started).Milliseconds()
-		if err != nil {
+		switch {
+		case errors.Is(err, context.Canceled):
+			l.status.Stage = ScanStageCanceled
+		case err != nil:
+			l.status.Stage = ScanStageFailed
 			l.status.LastError = err.Error()
+		default:
+			l.status.Stage = ScanStageComplete
 		}
 		l.statusMu.Unlock()
 	}()
@@ -1439,6 +1646,9 @@ func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, dele
 	slog.Info("library scan index loaded", "known_tracks", len(known), "music_dirs", len(dirs), "scan_workers", workers)
 	scanCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	l.setScanCancel(cancel)
+	defer l.setScanCancel(nil)
+	l.setScanStage(ScanStageFiles)
 	paths := make(chan scanFile, scanPathBufferSize)
 	tracks := make(chan Track, scanWriteDrainMax)
 	writerDone := make(chan error, 1)
@@ -1451,9 +1661,10 @@ func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, dele
 	}()
 	lastProgressAt := started
 	lastProgressSeen := 0
+	lastLogAt := started
 	logProgress := func(force bool) {
 		now := time.Now()
-		if !force && now.Sub(lastProgressAt) < scanProgressLogEvery {
+		if !force && now.Sub(lastProgressAt) < scanStatusInterval {
 			return
 		}
 		elapsed := now.Sub(started)
@@ -1467,7 +1678,7 @@ func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, dele
 		}
 		l.statusMu.Lock()
 		l.status.DurationMS = elapsed.Milliseconds()
-		l.status.MP3Seen = seen
+		l.status.FilesSeen = seen
 		l.status.Parsed = atomic.LoadInt64(&parsed)
 		l.status.Indexed = atomic.LoadInt64(&indexed)
 		l.status.Unchanged = unchanged
@@ -1479,9 +1690,15 @@ func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, dele
 		l.status.RecentTracksPerSec = recentRate
 		l.status.AverageTracksPerSec = averageRate
 		l.statusMu.Unlock()
+		lastProgressAt = now
+		lastProgressSeen = seen
+		if !force && now.Sub(lastLogAt) < scanProgressLogEvery {
+			return
+		}
+		lastLogAt = now
 		slog.Info("library scan progress",
 			"duration", elapsed,
-			"mp3_seen", seen,
+			"files_seen", seen,
 			"parsed", atomic.LoadInt64(&parsed),
 			"indexed", atomic.LoadInt64(&indexed),
 			"pending_paths", len(paths),
@@ -1493,8 +1710,6 @@ func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, dele
 			"recent_tracks_per_sec", recentRate,
 			"average_tracks_per_sec", averageRate,
 		)
-		lastProgressAt = now
-		lastProgressSeen = seen
 	}
 	sendPath := func(file scanFile) error {
 		select {
@@ -1530,7 +1745,7 @@ func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, dele
 					track, err := readTrack(file.path, file.info)
 					if err != nil {
 						atomic.AddInt64(&skipped, 1)
-						slog.Warn("skip unreadable mp3", "path", file.path, "error", err)
+						slog.Warn("skip unreadable audio file", "path", file.path, "error", err)
 						continue
 					}
 					atomic.AddInt64(&parsed, 1)
@@ -1551,6 +1766,9 @@ func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, dele
 	for _, root := range dirs {
 		slog.Info("library scan walking directory", "path", root)
 		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+			if err := scanCtx.Err(); err != nil {
+				return err
+			}
 			if walkErr != nil {
 				walkFailed = true
 				slog.Warn("skip path during scan", "path", path, "error", walkErr)
@@ -1563,7 +1781,7 @@ func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, dele
 				}
 				return nil
 			}
-			if !isMP3(path) {
+			if !isSupportedAudio(path) {
 				return nil
 			}
 			seen++
@@ -1571,14 +1789,14 @@ func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, dele
 			if err != nil {
 				atomic.AddInt64(&skipped, 1)
 				delete(known, path)
-				slog.Warn("skip unreadable mp3 info", "path", path, "error", err)
+				slog.Warn("skip unreadable audio file info", "path", path, "error", err)
 				logProgress(false)
 				return nil
 			}
 			modTime := info.ModTime().Unix()
-			if knownModTime, ok := known[path]; ok {
+			if existing, ok := known[path]; ok {
 				delete(known, path)
-				if knownModTime == modTime {
+				if existing.modTime == modTime && existing.metaVersion == trackMetaVersion {
 					unchanged++
 					logProgress(false)
 					return nil
@@ -1617,6 +1835,10 @@ func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, dele
 	if !walkFailed {
 		removed = len(known)
 		if removed > 0 {
+			l.statusMu.Lock()
+			l.status.Stage = ScanStageRemoving
+			l.status.Removed = removed
+			l.statusMu.Unlock()
 			slog.Info("library scan deleting missing tracks", "tracks", removed)
 		}
 		if err := l.deleteMissing(ctx, known); err != nil {
@@ -1626,7 +1848,7 @@ func (l *Library) scanDirs(ctx context.Context, dirs []string, workers int, dele
 	l.statusMu.Lock()
 	l.status.Removed = removed
 	l.statusMu.Unlock()
-	slog.Info("library scan committed", "duration", time.Since(started), "music_dirs", len(dirs), "scan_workers", workers, "mp3_seen", seen, "parsed", atomic.LoadInt64(&parsed), "indexed", atomic.LoadInt64(&indexed), "unchanged", unchanged, "ignored_dirs", ignoredDirs, "skipped", atomic.LoadInt64(&skipped), "removed", removed, "deletion_pass", !walkFailed)
+	slog.Info("library scan committed", "duration", time.Since(started), "music_dirs", len(dirs), "scan_workers", workers, "files_seen", seen, "parsed", atomic.LoadInt64(&parsed), "indexed", atomic.LoadInt64(&indexed), "unchanged", unchanged, "ignored_dirs", ignoredDirs, "skipped", atomic.LoadInt64(&skipped), "removed", removed, "deletion_pass", !walkFailed)
 	return nil
 }
 
@@ -1640,6 +1862,7 @@ func readTrack(path string, info fs.FileInfo) (Track, error) {
 		path:    path,
 		Title:   title,
 		Artist:  artist,
+		Format:  formatName(path),
 		Size:    info.Size(),
 		ModTime: info.ModTime(),
 	}
@@ -1650,16 +1873,18 @@ func readTrack(path string, info fs.FileInfo) (Track, error) {
 	}
 	defer f.Close()
 
-	meta, err := tag.ReadFrom(f)
+	meta, err := readMetadata(f, path)
 	if err == nil {
-		if meta.Title() != "" {
-			t.Title = meta.Title()
+		if meta.Title != "" {
+			t.Title = meta.Title
 		}
-		if meta.Artist() != "" {
-			t.Artist = meta.Artist()
+		if meta.Artist != "" {
+			t.Artist = meta.Artist
 		}
-		t.Album = meta.Album()
-		t.TrackNo, _ = meta.Track()
+		t.Album = meta.Album
+		t.AlbumArtist = meta.AlbumArtist
+		t.TrackNo = meta.TrackNo
+		t.DiscNo = meta.DiscNo
 	}
 	normalizeTrackDisplay(&t)
 	return t, nil
@@ -1692,6 +1917,25 @@ func setTrackKeys(t *Track) {
 	}
 	t.MatchKey = match
 	t.DedupeKey = fmt.Sprintf("%s|%d|%d", match, t.Size, t.ModTime.Unix())
+	t.AlbumKey = albumKey(t)
+}
+
+func albumKey(t *Track) string {
+	album := normalizeSearch(t.Album)
+	if album == "" {
+		return ""
+	}
+	artist := normalizeSearch(t.AlbumArtist)
+	if artist == "" {
+		artist = normalizeSearch(t.Artist)
+	}
+	if artist != "" {
+		return album + "|" + artist
+	}
+	if t.path == "" {
+		return album + "|"
+	}
+	return album + "|dir:" + strings.ToLower(filepath.ToSlash(filepath.Dir(t.path)))
 }
 
 func fallbackTitle(path string) string {

@@ -12,7 +12,11 @@ async function api(path, options = {}) {
   if (res.status === 204) {
     return null;
   }
-  return res.json();
+  const body = await res.text();
+  if (!body) {
+    return null;
+  }
+  return JSON.parse(body);
 }
 
 async function command(body) {
