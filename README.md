@@ -1,8 +1,8 @@
 # listen-party
 
-`listen-party` is a self-hosted MP3 player for offices and trusted LANs. It
-indexes local music, provides shared playback rooms, and keeps connected
-browsers synchronized.
+`listen-party` is a self-hosted music player for offices and trusted LANs. It
+indexes local MP3, FLAC, and WAV files, provides shared playback rooms, and
+keeps connected browsers synchronized.
 
 The server is one Go binary with an embedded web UI. It does not require a CDN,
 external database, or runtime internet service. Metadata, playlists, and local
@@ -10,13 +10,15 @@ authentication are stored beside the configuration file.
 
 ## Features
 
-- Recursive MP3 indexing and title, artist, or album search.
+- Recursive MP3, FLAC, and WAV indexing and title, artist, or album search.
+- Album browsing built from indexed tags, with play-now and queue-album actions.
+- Library resync from the application for any signed-in listener.
 - Multiple rooms with independent playback, queue, and history state.
 - Shared play/pause, seek, skip, previous, and play-now controls.
 - Queue add, remove, clear, and drag-and-drop reordering.
 - Optional per-room Auto-DJ playback in shuffled library or playlist cycles when the queue is exhausted.
 - Persistent user playlists with owner/admin editing.
-- Native folder selection for importing indexed network-share tracks into playlists.
+- Native folder selection for importing indexed network-share audio into playlists.
 - Room permissions for everyone, authentication groups, or individual users.
 - Room administrators delegated through authentication groups.
 - Local username/password authentication and optional Keycloak login.
@@ -235,9 +237,9 @@ user override.
 
 | Permission | Allows |
 | --- | --- |
-| `queue_add` | Add tracks to the queue |
+| `queue_add` | Add tracks or a whole album to the queue |
 | `queue_manage` | Remove, reorder, or clear queued tracks; clear history; toggle Auto-DJ |
-| `playback_control` | Play, pause, seek, skip, previous, and play-now |
+| `playback_control` | Play, pause, seek, skip, previous, play-now, and play-album |
 | `volume_control` | Change synchronized room volume and mute state |
 
 Example restricted room:
@@ -288,7 +290,8 @@ Auto-DJ playlist shuffling uses the room's `queue_manage` permission.
 Playlist viewing and ownership are independent of room permissions.
 
 Playlist owners and application admins can use **Import from path...** to
-append MP3s from a folder selected with the browser's native directory picker.
+append indexed audio files from a folder selected with the browser's native
+directory picker.
 The browser sends only relative filenames, sizes, and modification times;
 audio files are not uploaded. The server imports matches from its existing
 index and reports unmatched or ambiguous files. The selected network share
@@ -297,13 +300,28 @@ server, though their mount paths may differ.
 
 ## Music Library
 
-The server reconciles every configured music directory at startup. Use
-**Rescan** in `/admin` to reconcile all configured directories or the button
-beside a directory to reconcile only that path. Scans are incremental: unchanged
-files are skipped, changed and new MP3s are indexed, and missing files are
-removed from the active index.
+The server reconciles every configured music directory at startup. Any
+signed-in listener can start the same reconciliation with **Resync** beside the
+library tabs in the application, after confirming the prompt; `/admin`
+additionally offers **Rescan** for all configured directories or a button
+beside a directory to reconcile only that path.
 
-Indexing reads filesystem information and basic MP3 tags. Track duration is
+Only one scan runs at a time. While one is running, every listener's Resync
+button is disabled and further requests are rejected, whoever started it.
+Application admins are the exception: their button becomes **Restart**, which
+cancels the running scan and starts a fresh one from the beginning.
+
+Resync returns immediately and the scan continues even if the browser that
+started it closes. Every browser polls the scan and shows its stage — loading
+index, scanning files, or removing missing tracks — with running file, index,
+and removal counts, so listeners see progress on a scan somebody else started.
+
+Scans are incremental: unchanged files are skipped, changed and new files are
+indexed, and missing files are removed from the active index. Files indexed by
+an older listen-party release are re-read once after an upgrade that extracts
+new metadata, so an upgrade's first scan is slower than a routine one.
+
+Indexing reads filesystem information and audio tags. Track duration is
 calculated lazily during use and cached; scans do not read entire audio files to
 calculate duration.
 
@@ -311,9 +329,27 @@ calculate duration.
 for local storage; reduce it for slow or heavily shared NAS mounts. More workers
 can increase storage pressure without making a constrained share faster.
 
-Only MP3 files are indexed. Playlists retain their stored entries when a file
-is temporarily unavailable, but unavailable tracks cannot be played until the
-library can resolve them again.
+MP3, FLAC, and WAV files are indexed. Playlists retain their stored entries when
+a file is temporarily unavailable, but unavailable tracks cannot be played until
+the library can resolve them again.
+
+Metadata comes from ID3 tags for MP3, Vorbis comments for FLAC, and RIFF INFO
+chunks or an embedded ID3 chunk for WAV. Files without usable tags fall back to
+the filename. Playback relies on the browser's own decoders: MP3 and WAV are
+supported everywhere, and FLAC is supported by current versions of Chrome,
+Edge, Firefox, and Safari.
+
+### Albums
+
+**Albums** in the application lists releases derived from indexed tags. Tracks
+group by album title and album artist, falling back to the track artist when no
+album artist is tagged. When neither is present, releases that share a title are
+kept apart by their containing directory. Opening an album lists its tracks in
+disc and track-number order.
+
+Queueing an album needs the room's `queue_add` permission; playing one now needs
+`playback_control`. Albums are derived from the index at query time, so they
+follow the library without any additional storage or maintenance.
 
 To deliberately rebuild only the track index, first stop and back up the server,
 then run:

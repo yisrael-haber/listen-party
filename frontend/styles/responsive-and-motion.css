@@ -2,6 +2,12 @@
   .queue-reorder-error {
     animation: none;
   }
+
+  .scan-progress-bar {
+    width: 100%;
+    animation: none;
+    opacity: 0.55;
+  }
 }
 
 .row-actions {

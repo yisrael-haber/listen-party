@@ -50,6 +50,7 @@ type RoomAction struct {
 	IP       string    `json:"ip"`
 	Username string    `json:"username"`
 	Text     string    `json:"text"`
+	Kind     string    `json:"kind,omitempty"`
 }
 
 func defaultAutoDJSource() AutoDJSource {
@@ -119,6 +120,8 @@ type Playback struct {
 	autoDJEntries      []int64
 	autoDJPreparing    bool
 	roomAudio          RoomAudio
+	albumKey           string
+	albumItems         []int64
 	actions            []RoomAction
 	notify             map[chan PlaybackState]UserInfo
 	listeners          map[string]*listenerPresence
@@ -136,6 +139,7 @@ type listenerPresence struct {
 
 const defaultListenerGrace = 10 * time.Second
 const maxRoomActions = 200
+const actionCoalesceWindow = 30 * time.Second
 const maxQueueItems = 200
 
 func NewPlayback(roomID string) *Playback {
@@ -191,6 +195,12 @@ func (p *Playback) PlayNow(dedupeKey string, requestedBy string) PlaybackState {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	p.playNowLocked(dedupeKey, requestedBy)
+	p.bumpLocked()
+	return p.stateLocked()
+}
+
+func (p *Playback) playNowLocked(dedupeKey string, requestedBy string) {
 	p.removeQueuedTrackLocked(dedupeKey)
 	if p.autoDJNext == dedupeKey {
 		p.autoDJNext = ""
@@ -202,8 +212,78 @@ func (p *Playback) PlayNow(dedupeKey string, requestedBy string) PlaybackState {
 	p.started = time.Now()
 	p.paused = false
 	p.pausePos = 0
+}
+
+func (p *Playback) PlayAlbum(albumKey string, dedupeKeys []string, requestedBy string) (PlaybackState, int, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if len(dedupeKeys) == 0 {
+		return p.stateLocked(), 0, false
+	}
+	restart := p.albumKey == albumKey && len(p.albumItems) > 0
+	insertAt := len(p.queue)
+	if restart {
+		insertAt = p.removeAlbumItemsLocked()
+	}
+	p.playNowLocked(dedupeKeys[0], requestedBy)
+	if insertAt > len(p.queue) {
+		insertAt = len(p.queue)
+	}
+
+	queued := make([]PlaybackItem, 0, len(dedupeKeys)-1)
+	for _, dedupeKey := range dedupeKeys[1:] {
+		if len(p.queue)+len(queued) >= maxQueueItems {
+			break
+		}
+		p.nextID++
+		queued = append(queued, PlaybackItem{
+			ID:          p.nextID,
+			DedupeKey:   dedupeKey,
+			At:          time.Now(),
+			RequestedBy: requestedBy,
+			Source:      "user",
+		})
+	}
+	p.queue = slices.Insert(p.queue, insertAt, queued...)
+	p.albumKey = albumKey
+	p.albumItems = make([]int64, 0, len(queued))
+	for _, item := range queued {
+		p.albumItems = append(p.albumItems, item.ID)
+	}
 	p.bumpLocked()
-	return p.stateLocked()
+	return p.stateLocked(), len(queued) + 1, restart
+}
+
+func (p *Playback) removeAlbumItemsLocked() int {
+	ids := make(map[int64]struct{}, len(p.albumItems))
+	for _, id := range p.albumItems {
+		ids[id] = struct{}{}
+	}
+	insertAt := -1
+	kept := p.queue[:0]
+	for i, item := range p.queue {
+		if _, ok := ids[item.ID]; ok {
+			if insertAt < 0 {
+				insertAt = len(kept)
+			}
+			continue
+		}
+		kept = append(kept, p.queue[i])
+	}
+	p.queue = kept
+	p.albumItems = nil
+	if insertAt < 0 {
+		return len(p.queue)
+	}
+	return insertAt
+}
+
+func (p *Playback) QueueAlbumItems(albumKey string, itemIDs []int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.albumKey = albumKey
+	p.albumItems = append([]int64(nil), itemIDs...)
 }
 
 func (p *Playback) Pause() PlaybackState {
@@ -390,6 +470,8 @@ func (p *Playback) Clear() PlaybackState {
 
 	if len(p.queue) > 0 {
 		p.queue = nil
+		p.albumKey = ""
+		p.albumItems = nil
 		p.bumpLocked()
 	}
 	return p.stateLocked()
@@ -477,6 +559,15 @@ func (p *Playback) AddAction(action RoomAction) PlaybackState {
 	defer p.mu.Unlock()
 	if action.At.IsZero() {
 		action.At = time.Now()
+	}
+	if action.Kind != "" && len(p.actions) > 0 {
+		last := p.actions[0]
+		if last.Kind == action.Kind && last.Username == action.Username &&
+			action.At.Sub(last.At) < actionCoalesceWindow {
+			p.actions[0] = action
+			p.bumpLocked()
+			return p.stateLocked()
+		}
 	}
 	p.actions = append([]RoomAction{action}, p.actions...)
 	if len(p.actions) > maxRoomActions {

@@ -170,7 +170,8 @@ button.compact {
 }
 
 .library-rail #results,
-.library-rail .playlists-view {
+.library-rail .playlists-view,
+.library-rail .albums-view {
   padding-inline: 14px 10px;
   padding-bottom: 14px;
 }

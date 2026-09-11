@@ -79,6 +79,7 @@ func main() {
 
 	serverCtx, stopServer := context.WithCancel(context.Background())
 	defer stopServer()
+	app.ScanContext = serverCtx
 
 	go func() {
 		scanStarted := time.Now()

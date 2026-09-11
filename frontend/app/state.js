@@ -5,6 +5,11 @@ export const searchTextStorageKey = "listen-party.searchText";
 export const searchFieldStorageKey = "listen-party.searchField";
 export const railModeStorageKey = "listen-party.railMode";
 export const playlistStorageKey = "listen-party.selectedPlaylist";
+export const albumSearchStorageKey = "listen-party.albumSearch";
+export const albumStorageKey = "listen-party.openAlbum";
+export const scanPollActiveMS = 1000;
+export const scanPollIdleMS = 10000;
+export const audioExtensions = [".mp3", ".flac", ".wav"];
 export const localVolumeStorageKey = "listen-party.localVolume";
 export const localMutedStorageKey = "listen-party.localMuted";
 export const minimumRoomSaveFeedbackMS = 450;
@@ -15,6 +20,7 @@ export const recoveryCooldownMS = 30000;
 export let lastState = null;
 export let lastStateReceivedAt = 0;
 export let searchTimer = 0;
+export let albumSearchTimer = 0;
 export let seeking = false;
 export let events = null;
 export let playlists = [];
@@ -41,6 +47,9 @@ export function setLastStateReceivedAt(value) {
 }
 export function setSearchTimer(value) {
   searchTimer = value;
+}
+export function setAlbumSearchTimer(value) {
+  albumSearchTimer = value;
 }
 export function setSeeking(value) {
   seeking = value;

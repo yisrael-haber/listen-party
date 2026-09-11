@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -27,6 +28,7 @@ type Server struct {
 	Rooms          *RoomManager
 	Config         Config
 	ConfigPath     string
+	ScanContext    context.Context
 	configMu       sync.RWMutex
 	configUpdateMu sync.Mutex
 }
@@ -57,6 +59,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /rooms/{room}/api/admin/disconnect", requireUser(http.HandlerFunc(s.handleRoomAdminDisconnect)))
 	mux.Handle("GET /api/search", requireUser(http.HandlerFunc(s.handleSearch)))
 	mux.Handle("GET /api/library", requireUser(http.HandlerFunc(s.handleLibrary)))
+	mux.Handle("POST /api/library/rescan", requireUser(http.HandlerFunc(s.handleLibraryRescan)))
+	mux.Handle("GET /api/albums", requireUser(http.HandlerFunc(s.handleAlbums)))
+	mux.Handle("GET /api/albums/{key}", requireUser(http.HandlerFunc(s.handleAlbum)))
 	mux.Handle("GET /api/playlists", requireUser(http.HandlerFunc(s.handlePlaylists)))
 	mux.Handle("POST /api/playlists", requireUser(http.HandlerFunc(s.handlePlaylistCreate)))
 	mux.Handle("GET /api/playlists/{id}", requireUser(http.HandlerFunc(s.handlePlaylist)))
@@ -340,9 +345,86 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{
-		"track_count": count,
-		"scan":        s.Library.ScanStatus(),
+		"track_count":      count,
+		"formats":          musiclib.SupportedExtensions(),
+		"scan":             s.Library.ScanStatus(),
+		"can_restart_scan": s.Auth.Authorized(r, RoleAdmin),
 	})
+}
+
+func (s *Server) handleLibraryRescan(w http.ResponseWriter, r *http.Request) {
+	admin := s.Auth.Authorized(r, RoleAdmin)
+	restart := s.Library.ScanStatus().Scanning
+	if restart && !admin {
+		http.Error(w, musiclib.ErrScanInProgress.Error(), http.StatusConflict)
+		return
+	}
+	slog.Info("library resync requested", "remote", r.RemoteAddr, "restart", restart)
+	go func() {
+		started := time.Now()
+		var err error
+		if restart {
+			err = s.Library.RestartScan(s.scanContext())
+		} else {
+			err = s.Library.Scan(s.scanContext())
+		}
+		if err != nil {
+			if errors.Is(err, musiclib.ErrScanInProgress) {
+				slog.Info("library resync ignored; already scanning", "restart", restart)
+				return
+			}
+			if errors.Is(err, context.Canceled) {
+				slog.Info("library resync canceled", "duration", time.Since(started))
+				return
+			}
+			slog.Warn("library resync failed", "duration", time.Since(started), "error", err)
+			return
+		}
+		count, err := s.Library.Count(context.Background())
+		if err != nil {
+			slog.Warn("count library after resync", "duration", time.Since(started), "error", err)
+			return
+		}
+		slog.Info("library resync completed", "duration", time.Since(started), "restart", restart, "tracks", count)
+	}()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	response := map[string]any{"scan": s.Library.ScanStatus(), "restarted": restart}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Warn("write resync response", "remote", r.RemoteAddr, "error", err)
+	}
+}
+
+func (s *Server) scanContext() context.Context {
+	if s.ScanContext != nil {
+		return s.ScanContext
+	}
+	return context.Background()
+}
+
+func (s *Server) handleAlbums(w http.ResponseWriter, r *http.Request) {
+	albums, err := s.Library.ListAlbums(r.Context(), r.URL.Query().Get("q"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, albums)
+}
+
+func (s *Server) handleAlbum(w http.ResponseWriter, r *http.Request) {
+	album, tracks, err := s.Library.Album(r.Context(), r.PathValue("key"))
+	if err != nil {
+		if errors.Is(err, musiclib.ErrAlbumNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, struct {
+		musiclib.Album
+		Tracks []musiclib.Track `json:"tracks"`
+	}{Album: album, Tracks: tracks})
 }
 
 type playlistView struct {
@@ -761,6 +843,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Action            string       `json:"action"`
 		DedupeKey         string       `json:"dedupe_key"`
+		AlbumKey          string       `json:"album_key"`
 		QueueItemID       int64        `json:"queue_item_id"`
 		BeforeQueueItemID int64        `json:"before_queue_item_id"`
 		PositionMS        int64        `json:"position_ms"`
@@ -856,6 +939,52 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.writeCommandState(w, r, "queue_add", room, displayName, state)
+	case "queue_album", "play_album":
+		album, tracks, err := s.Library.Album(r.Context(), req.AlbumKey)
+		if err != nil {
+			if errors.Is(err, musiclib.ErrAlbumNotFound) {
+				http.Error(w, "album not found", http.StatusNotFound)
+				return
+			}
+			writeError(w, err)
+			return
+		}
+		for _, track := range tracks {
+			if track.DurationMS <= 0 {
+				s.Library.EnsureDuration(track.ID)
+			}
+		}
+		dedupeKeys := make([]string, 0, len(tracks))
+		for _, track := range tracks {
+			dedupeKeys = append(dedupeKeys, track.DedupeKey)
+		}
+		if req.Action == "play_album" {
+			_, queued, restarted := room.Playback.PlayAlbum(album.Key, dedupeKeys, displayName)
+			state := s.recordRoomAction(r, room, displayName, albumActionText(req.Action, album, queued, restarted))
+			s.writeCommandState(w, r, "play_album", room, displayName, state)
+			return
+		}
+		queued := 0
+		var queuedIDs []int64
+		var state PlaybackState
+		for _, dedupeKey := range dedupeKeys {
+			next, err := room.Playback.Add(dedupeKey, displayName)
+			if err != nil {
+				break
+			}
+			state = next
+			queued++
+			if len(state.Queue) > 0 {
+				queuedIDs = append(queuedIDs, state.Queue[len(state.Queue)-1].ID)
+			}
+		}
+		if queued == 0 {
+			http.Error(w, "the queue is full", http.StatusConflict)
+			return
+		}
+		room.Playback.QueueAlbumItems(album.Key, queuedIDs)
+		state = s.recordRoomAction(r, room, displayName, albumActionText(req.Action, album, queued, false))
+		s.writeCommandState(w, r, "queue_album", room, displayName, state)
 	case "queue_remove":
 		if req.QueueItemID <= 0 {
 			http.Error(w, "queue_item_id is required", http.StatusBadRequest)
@@ -935,7 +1064,12 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "volume must be between 0 and 0.5", http.StatusBadRequest)
 			return
 		}
-		s.writeCommandState(w, r, "room_audio", room, displayName, room.Playback.SetRoomAudio(req.Volume, req.Muted))
+		before := room.Playback.Snapshot().RoomAudio
+		state := room.Playback.SetRoomAudio(req.Volume, req.Muted)
+		if text, kind := roomAudioActionText(before, state.RoomAudio); text != "" {
+			state = s.recordRoomAudioAction(r, room, displayName, text, kind)
+		}
+		s.writeCommandState(w, r, "room_audio", room, displayName, state)
 	case "previous":
 		s.writeCommandState(w, r, "previous", room, displayName, room.Playback.Previous())
 	case "seek":
@@ -993,6 +1127,38 @@ func (s *Server) recordRoomAction(r *http.Request, room *Room, username, text st
 	})
 }
 
+func (s *Server) recordRoomAudioAction(r *http.Request, room *Room, username, text, kind string) PlaybackState {
+	ip := ""
+	if parsedIP, ok := clientIP(r.RemoteAddr); ok {
+		ip = parsedIP.String()
+	}
+	return room.Playback.AddAction(RoomAction{
+		IP:       ip,
+		Username: username,
+		Text:     text,
+		Kind:     kind,
+	})
+}
+
+func roomAudioActionText(before, after RoomAudio) (text, kind string) {
+	percent := int(math.Round(after.Volume / maxRoomVolume * 100))
+	mutedNow := after.Muted || after.Volume == 0
+	mutedBefore := before.Muted || before.Volume == 0
+	volumeChanged := math.Abs(after.Volume-before.Volume) > 0.001
+	switch {
+	case mutedNow && !mutedBefore:
+		return "Muted the room.", "room_mute"
+	case !mutedNow && mutedBefore:
+		return fmt.Sprintf("Unmuted the room at %d%% volume.", percent), "room_mute"
+	case mutedNow:
+		return "", ""
+	case volumeChanged:
+		return fmt.Sprintf("Set the room volume to %d%%.", percent), "room_volume"
+	default:
+		return "", ""
+	}
+}
+
 func (s *Server) skipActionText(ctx context.Context, previousKey, _ string) string {
 	previousName := s.trackActionName(ctx, previousKey)
 	return fmt.Sprintf("Skipped %q.", previousName)
@@ -1017,13 +1183,32 @@ func trackActionTitle(track musiclib.Track) string {
 	return title
 }
 
+func albumActionText(action string, album musiclib.Album, queued int, restarted bool) string {
+	name := album.Name
+	if album.Artist != "" {
+		name = fmt.Sprintf("%s by %s", album.Name, album.Artist)
+	}
+	tracks := "tracks"
+	if queued == 1 {
+		tracks = "track"
+	}
+	switch {
+	case restarted:
+		return fmt.Sprintf("Restarted the album %q (%d %s).", name, queued, tracks)
+	case action == "play_album":
+		return fmt.Sprintf("Played the album %q now (%d %s).", name, queued, tracks)
+	default:
+		return fmt.Sprintf("Queued the album %q (%d %s).", name, queued, tracks)
+	}
+}
+
 func permissionForAction(action string) (RoomPermission, bool) {
 	switch action {
-	case "queue_add":
+	case "queue_add", "queue_album":
 		return PermissionQueueAdd, true
 	case "queue_remove", "queue_reorder", "queue_clear", "history_clear", "auto_dj", "auto_dj_source":
 		return PermissionQueueManage, true
-	case "play", "play_now", "pause", "previous", "seek", "skip":
+	case "play", "play_now", "play_album", "pause", "previous", "seek", "skip":
 		return PermissionPlaybackControl, true
 	case "room_audio":
 		return PermissionVolumeControl, true
@@ -1276,7 +1461,7 @@ func (s *Server) handleMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer media.Close()
-	w.Header().Set("Content-Type", "audio/mpeg")
+	w.Header().Set("Content-Type", media.ContentType())
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeContent(w, r, media.Name(), media.ModTime(), media)
 }
