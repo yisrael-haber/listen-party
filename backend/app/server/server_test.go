@@ -614,6 +614,85 @@ func TestPlaylistOwnerImportsNativeFolderManifest(t *testing.T) {
 	}
 }
 
+func TestPlaylistKeyExportImport(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	for _, name := range []string{"Artist - First.mp3", "Artist - Second.mp3"} {
+		if err := os.WriteFile(filepath.Join(root, name), testMP3Frames(12), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lib, err := musiclib.Open(ctx, filepath.Join(t.TempDir(), "tracks.sqlite"), []string{root}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lib.Close()
+	if err := lib.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tracks, err := lib.Search(ctx, "Artist")
+	if err != nil || len(tracks) != 2 {
+		t.Fatalf("tracks = %#v, err = %v", tracks, err)
+	}
+	playlist, err := lib.CreatePlaylist(ctx, "Saved Mix 123!?", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lib.AddPlaylistTrack(ctx, playlist.ID, tracks[1].ContentKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lib.AddPlaylistTrack(ctx, playlist.ID, tracks[0].ContentKey); err != nil {
+		t.Fatal(err)
+	}
+	server := testServer(&Server{Auth: fakeAuth{user: UserInfo{ID: "viewer", Username: "bob"}}, Library: lib}).Handler()
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/playlists/%d/export", playlist.ID), nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/plain; charset=utf-8" || !strings.Contains(rec.Header().Get("Content-Disposition"), "Saved Mix 123.txt") {
+		t.Fatalf("export response status=%d headers=%v body=%q", rec.Code, rec.Header(), rec.Body.String())
+	}
+	if want := tracks[1].ContentKey + "\n" + tracks[0].ContentKey + "\n"; rec.Body.String() != want {
+		t.Fatalf("export body = %q, want %q", rec.Body.String(), want)
+	}
+	for _, user := range []UserInfo{{ID: "other", Username: "other"}, {ID: "owner", Username: "owner"}} {
+		server := testServer(&Server{Auth: fakeAuth{user: user}, Library: lib}).Handler()
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/playlists/%d/import", playlist.ID), strings.NewReader("\n"+tracks[0].ContentKey+"\nmissing"))
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if user.ID == "other" {
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("viewer import status = %d, want %d", rec.Code, http.StatusForbidden)
+			}
+			continue
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("owner import status = %d: %s", rec.Code, rec.Body.String())
+		}
+		var result musiclib.PlaylistKeyImport
+		if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Imported != 0 || result.Duplicates != 1 || result.Unavailable != 1 || result.Invalid != 1 {
+			t.Fatalf("import result = %#v", result)
+		}
+	}
+	tooManyLines := strings.Repeat("key\n", 50_001)
+	server = testServer(&Server{Auth: fakeAuth{user: UserInfo{ID: "owner", Username: "owner"}}, Library: lib}).Handler()
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/playlists/%d/import", playlist.ID), strings.NewReader(tooManyLines))
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("large import status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+	tooManyBytes := strings.Repeat("x", 16<<20+2)
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/playlists/%d/import", playlist.ID), strings.NewReader(tooManyBytes))
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized import status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
 func TestSessionReportsRoomAdministration(t *testing.T) {
 	server := testServer(&Server{
 		Auth:   fakeAuth{user: UserInfo{Username: "alice", Groups: []string{"room-admins"}}},

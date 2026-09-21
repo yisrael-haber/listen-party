@@ -19,8 +19,14 @@ let playlistSelect,
   playlistCreatePanel,
   playlistCreateForm,
   playlistNameInput,
+  playlistActionsMenu,
+  playlistActionsButton,
+  playlistActionsOptions,
   importPlaylistFolderButton,
   playlistFolderInput,
+  importPlaylistFileButton,
+  playlistFileInput,
+  exportPlaylistButton,
   playlistImportStatus,
   libraryTab,
   playlistsTab,
@@ -36,8 +42,14 @@ function init() {
   playlistCreatePanel = document.getElementById("playlistCreatePanel");
   playlistCreateForm = document.getElementById("playlistCreateForm");
   playlistNameInput = document.getElementById("playlistName");
+  playlistActionsMenu = document.getElementById("playlistActionsMenu");
+  playlistActionsButton = document.getElementById("playlistActionsButton");
+  playlistActionsOptions = document.getElementById("playlistActionsOptions");
   importPlaylistFolderButton = document.getElementById("importPlaylistFolder");
   playlistFolderInput = document.getElementById("playlistFolderInput");
+  importPlaylistFileButton = document.getElementById("importPlaylistFile");
+  playlistFileInput = document.getElementById("playlistFileInput");
+  exportPlaylistButton = document.getElementById("exportPlaylist");
   playlistImportStatus = document.getElementById("playlistImportStatus");
   libraryTab = document.getElementById("libraryTab");
   playlistsTab = document.getElementById("playlistsTab");
@@ -97,9 +109,59 @@ function init() {
   });
 
   importPlaylistFolderButton.addEventListener("click", () => {
+    closePlaylistActionsMenu();
     playlistImportStatus.textContent = "";
     playlistFolderInput.value = "";
     playlistFolderInput.click();
+  });
+
+  importPlaylistFileButton.addEventListener("click", () => {
+    closePlaylistActionsMenu();
+    playlistImportStatus.textContent = "";
+    playlistFileInput.value = "";
+    playlistFileInput.click();
+  });
+
+  playlistFileInput.addEventListener("change", async () => {
+    const playlist = playlists.find((item) => item.id === selectedPlaylistID);
+    const file = playlistFileInput.files?.[0];
+    if (!playlist?.can_edit || !file) {
+      return;
+    }
+    await importPlaylistFile(playlist, file);
+  });
+
+  playlistActionsButton.addEventListener("click", () => {
+    const open = playlistActionsOptions.hidden;
+    playlistActionsOptions.hidden = !open;
+    playlistActionsButton.setAttribute("aria-expanded", String(open));
+  });
+
+  exportPlaylistButton.addEventListener("click", async () => {
+    const playlist = playlists.find((item) => item.id === selectedPlaylistID);
+    if (!playlist) {
+      return;
+    }
+    closePlaylistActionsMenu();
+    exportPlaylistButton.disabled = true;
+    try {
+      const response = await fetch(`/api/playlists/${playlist.id}/export`);
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${playlist.name}.txt`;
+      link.click();
+      URL.revokeObjectURL(url);
+      playlistImportStatus.textContent = "Playlist exported";
+    } catch (err) {
+      playlistImportStatus.textContent = err.message || "Playlist export failed";
+    } finally {
+      exportPlaylistButton.disabled = false;
+    }
   });
 
   playlistFolderInput.addEventListener("change", async () => {
@@ -147,6 +209,34 @@ function init() {
       importPlaylistFolderButton.disabled = false;
     }
   });
+
+  document.addEventListener("click", (event) => {
+    if (!playlistActionsMenu.contains(event.target)) {
+      closePlaylistActionsMenu();
+    }
+  });
+}
+
+async function importPlaylistFile(playlist, file) {
+  importPlaylistFileButton.disabled = true;
+  playlistImportStatus.textContent = `Importing ${file.name}...`;
+  try {
+    const result = await apiModule.api(`/api/playlists/${playlist.id}/import`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: await file.text(),
+    });
+    const skipped = [];
+    if (result.unavailable > 0) skipped.push(`${result.unavailable} unavailable`);
+    if (result.duplicates > 0) skipped.push(`${result.duplicates} duplicate`);
+    if (result.invalid > 0) skipped.push(`${result.invalid} blank`);
+    playlistImportStatus.textContent = `Imported ${result.imported} key${result.imported === 1 ? "" : "s"}${skipped.length ? `; skipped ${skipped.join(", ")}` : ""}`;
+    await loadPlaylists(playlist.id);
+  } catch (err) {
+    playlistImportStatus.textContent = err.message || "Playlist import failed";
+  } finally {
+    importPlaylistFileButton.disabled = false;
+  }
 }
 
 async function loadPlaylists(selectID = selectedPlaylistID) {
@@ -233,7 +323,9 @@ function renderPlaylistDetail(playlist) {
 function updatePlaylistActionButtons() {
   const playlist = playlists.find((item) => item.id === selectedPlaylistID);
   deletePlaylistButton.hidden = !playlist?.can_edit;
+  playlistActionsMenu.hidden = !playlist;
   importPlaylistFolderButton.hidden = !playlist?.can_edit;
+  importPlaylistFileButton.hidden = !playlist?.can_edit;
 }
 
 function setPlaylistButtonContent(button) {
@@ -260,6 +352,12 @@ function closePlaylistAddMenus(except = null) {
       button.setAttribute("aria-expanded", "false");
     }
   });
+}
+
+function closePlaylistActionsMenu() {
+  if (!playlistActionsOptions) return;
+  playlistActionsOptions.hidden = true;
+  playlistActionsButton.setAttribute("aria-expanded", "false");
 }
 
 function restoreRailPreferences() {

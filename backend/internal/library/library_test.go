@@ -719,6 +719,52 @@ func TestImportPlaylistFolderMatchesIndexedManifest(t *testing.T) {
 	}
 }
 
+func TestImportPlaylistKeysReportsAndSkipsInvalidEntries(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	for _, name := range []string{"Artist - First.mp3", "Artist - Second.mp3"} {
+		if err := os.WriteFile(filepath.Join(root, name), validTestMP3(nil), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lib, err := musiclib.Open(ctx, filepath.Join(t.TempDir(), "tracks.sqlite"), []string{root}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lib.Close()
+	if err := lib.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tracks, err := lib.Search(ctx, "Artist")
+	if err != nil || len(tracks) != 2 {
+		t.Fatalf("tracks = %#v, err = %v", tracks, err)
+	}
+	playlist, err := lib.CreatePlaylist(ctx, "Imported", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := lib.ImportPlaylistKeys(ctx, playlist.ID, []string{
+		tracks[1].ContentKey, "", "missing-key", tracks[0].ContentKey, tracks[1].ContentKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Imported != 2 || result.Invalid != 1 || result.Unavailable != 1 || result.Duplicates != 1 {
+		t.Fatalf("import result = %#v", result)
+	}
+	playlist, err = lib.GetPlaylist(ctx, playlist.ID)
+	if err != nil || len(playlist.Items) != 2 {
+		t.Fatalf("playlist = %#v, err = %v", playlist, err)
+	}
+	if playlist.Items[0].ContentKey != tracks[1].ContentKey || playlist.Items[1].ContentKey != tracks[0].ContentKey {
+		t.Fatalf("playlist order = %#v", playlist.Items)
+	}
+	result, err = lib.ImportPlaylistKeys(ctx, playlist.ID, []string{tracks[0].ContentKey})
+	if err != nil || result.Imported != 0 || result.Duplicates != 1 {
+		t.Fatalf("existing-key import = %#v, %v", result, err)
+	}
+}
+
 func len64(value []byte) int64 { return int64(len(value)) }
 
 func TestSQLiteFTS5Available(t *testing.T) {

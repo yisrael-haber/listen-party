@@ -71,6 +71,13 @@ type PlaylistFolderImport struct {
 	Ambiguous  int `json:"ambiguous"`
 }
 
+type PlaylistKeyImport struct {
+	Imported    int `json:"imported"`
+	Duplicates  int `json:"duplicates"`
+	Unavailable int `json:"unavailable"`
+	Invalid     int `json:"invalid"`
+}
+
 // RoomPlaybackSnapshot is opaque application state associated with a room.
 // It intentionally lives beside the library data so a single SQLite database
 // remains the durable unit for a listen-party installation.
@@ -941,6 +948,95 @@ func (l *Library) AddPlaylistTrack(ctx context.Context, playlistID int64, conten
 		return PlaylistItem{}, err
 	}
 	return PlaylistItem{ID: id, PlaylistID: playlistID, Position: position, ContentKey: track.ContentKey, Title: track.Title, Artist: track.Artist, Album: track.Album}, nil
+}
+
+func (l *Library) ImportPlaylistKeys(ctx context.Context, playlistID int64, keys []string) (PlaylistKeyImport, error) {
+	result := PlaylistKeyImport{}
+	tracks := make([]Track, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	for _, rawKey := range keys {
+		key := strings.TrimSpace(rawKey)
+		if key == "" {
+			result.Invalid++
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			result.Duplicates++
+			continue
+		}
+		seen[key] = struct{}{}
+		track, err := l.ResolveContentKey(ctx, key)
+		if errors.Is(err, ErrTrackNotFound) {
+			result.Unavailable++
+			continue
+		}
+		if err != nil {
+			return result, err
+		}
+		tracks = append(tracks, track)
+	}
+
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM playlists WHERE id = ?`, playlistID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+		return result, ErrPlaylistNotFound
+	} else if err != nil {
+		return result, err
+	}
+	existing := make(map[string]struct{})
+	rows, err := tx.QueryContext(ctx, `SELECT content_key FROM playlist_items WHERE playlist_id = ?`, playlistID)
+	if err != nil {
+		return result, err
+	}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			rows.Close()
+			return result, err
+		}
+		existing[key] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return result, err
+	}
+	if err := rows.Close(); err != nil {
+		return result, err
+	}
+	var position int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(position), 0) FROM playlist_items WHERE playlist_id = ?`, playlistID).Scan(&position); err != nil {
+		return result, err
+	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO playlist_items(playlist_id, position, dedupe_key, match_key, content_key, title, artist, album) VALUES(?, ?, '', '', ?, ?, ?, ?)`)
+	if err != nil {
+		return result, err
+	}
+	defer stmt.Close()
+	for _, track := range tracks {
+		if _, ok := existing[track.ContentKey]; ok {
+			result.Duplicates++
+			continue
+		}
+		position++
+		if _, err := stmt.ExecContext(ctx, playlistID, position, track.ContentKey, track.Title, track.Artist, track.Album); err != nil {
+			return result, err
+		}
+		existing[track.ContentKey] = struct{}{}
+		result.Imported++
+	}
+	if result.Imported > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE playlists SET updated_at = ? WHERE id = ?`, time.Now().Unix(), playlistID); err != nil {
+			return result, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 func (l *Library) ImportPlaylistFolder(ctx context.Context, playlistID int64, files []FolderManifestFile) (PlaylistFolderImport, error) {

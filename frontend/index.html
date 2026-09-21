@@ -182,6 +182,12 @@
                 multiple
                 hidden
               />
+              <input
+                id="playlistFileInput"
+                type="file"
+                accept=".txt,text/plain"
+                hidden
+              />
             </div>
             <div id="playlistCreatePanel" class="playlist-create-panel" hidden>
               <form id="playlistCreateForm" class="playlist-create">
@@ -196,25 +202,26 @@
             </div>
             <div class="playlist-control-row">
               <select id="playlistSelect" aria-label="Playlist"></select>
-              <button
-                id="deletePlaylist"
-                class="secondary compact icon-only trash-button"
-                type="button"
-                title="Delete playlist"
-                aria-label="Delete playlist"
-                hidden
-              >
-                <span></span>
-              </button>
+              <div id="playlistActionsMenu" class="playlist-actions-menu" hidden>
+                <button
+                  id="playlistActionsButton"
+                  class="secondary compact icon-only playlist-actions-button"
+                  type="button"
+                  aria-expanded="false"
+                  aria-haspopup="menu"
+                  title="Playlist actions"
+                  aria-label="Playlist actions"
+                >
+                  <span aria-hidden="true"></span>
+                </button>
+                <div id="playlistActionsOptions" class="playlist-actions-options" role="menu" hidden>
+                  <button id="importPlaylistFolder" class="playlist-action-option" type="button" role="menuitem">Import from folder...</button>
+                  <button id="importPlaylistFile" class="playlist-action-option" type="button" role="menuitem">Import playlist file...</button>
+                  <button id="exportPlaylist" class="playlist-action-option" type="button" role="menuitem">Export playlist</button>
+                  <button id="deletePlaylist" class="playlist-action-option danger" type="button" role="menuitem" hidden>Delete playlist</button>
+                </div>
+              </div>
             </div>
-            <button
-              id="importPlaylistFolder"
-              class="secondary playlist-import-row"
-              type="button"
-              hidden
-            >
-              Import from path...
-            </button>
             <p id="playlistImportStatus" class="status"></p>
             <div id="playlistDetail"></div>
           </section>

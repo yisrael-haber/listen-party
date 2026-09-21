@@ -302,6 +302,8 @@ index and reports unmatched or ambiguous files. The selected network share
 must therefore be available to both the browser user's computer and the
 server, though their mount paths may differ.
 
+Playlist actions also support exporting the selected playlist as a plain-text file containing one content key per line. Owners and administrators can import the same format into the selected playlist; valid indexed keys are appended in file order, while unavailable and duplicate keys are skipped and reported.
+
 ## Music Library
 
 The server reconciles every configured music directory at startup. Use

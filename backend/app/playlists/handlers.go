@@ -1,7 +1,12 @@
 package playlists
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
+	"unicode"
 
 	"listen-party/backend/app/media"
 	"listen-party/backend/auth"
@@ -12,6 +17,8 @@ import (
 )
 
 const maxFolderImportFiles = 50_000
+const maxPlaylistImportLines = 50_000
+const maxPlaylistImportBytes = 16 << 20
 
 type Host interface {
 	AuthStore() auth.Gate
@@ -191,6 +198,91 @@ func HandlePlaylistImportFolder(w http.ResponseWriter, r *http.Request, host Hos
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	httpapi.WriteJSON(w, result)
+}
+
+func HandlePlaylistExport(w http.ResponseWriter, r *http.Request, host Host) {
+	_, ok := host.AuthStore().CurrentUser(r)
+	if !ok {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	id, ok := media.PathID(w, r, "id")
+	if !ok {
+		return
+	}
+	playlist, err := host.LibraryStore().GetPlaylist(r.Context(), id)
+	if err != nil {
+		httpapi.WriteError(w, err)
+		return
+	}
+	var body strings.Builder
+	for _, item := range playlist.Items {
+		body.WriteString(item.ContentKey)
+		body.WriteByte('\n')
+	}
+	filename := strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) || r == ' ' {
+			return r
+		}
+		return -1
+	}, playlist.Name))
+	if filename == "" {
+		filename = "playlist"
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.txt"`, filename))
+	_, _ = io.WriteString(w, body.String())
+}
+
+func HandlePlaylistImport(w http.ResponseWriter, r *http.Request, host Host) {
+	user, ok := host.AuthStore().CurrentUser(r)
+	if !ok {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	id, ok := media.PathID(w, r, "id")
+	if !ok {
+		return
+	}
+	playlist, err := host.LibraryStore().GetPlaylist(r.Context(), id)
+	if err != nil {
+		httpapi.WriteError(w, err)
+		return
+	}
+	if !userCanEditPlaylist(user, playlist) {
+		http.Error(w, "playlist edit denied", http.StatusForbidden)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxPlaylistImportBytes+1)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "playlist file is too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "unable to read playlist file", http.StatusBadRequest)
+		return
+	}
+	if len(data) > maxPlaylistImportBytes {
+		http.Error(w, "playlist file is too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	content := strings.TrimSuffix(string(data), "\n")
+	keys := strings.Split(content, "\n")
+	if len(keys) > maxPlaylistImportLines {
+		http.Error(w, "playlist file contains too many lines", http.StatusRequestEntityTooLarge)
+		return
+	}
+	result, err := host.LibraryStore().ImportPlaylistKeys(r.Context(), id, keys)
+	if err != nil {
+		httpapi.WriteError(w, err)
+		return
+	}
+	if result.Imported > 0 {
+		host.RoomStore().InvalidateAutoDJPlaylistCandidate(id)
 	}
 	httpapi.WriteJSON(w, result)
 }
